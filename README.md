@@ -1,200 +1,171 @@
-Recruiter AI Agent
-Overview
+# Recruiter AI Agent
 
-Recruiter AI Agent is an AI-powered recruitment assistant designed to make the candidate screening process faster and easier for recruiters.
+## About the Project
 
-The project takes a job description and candidate resumes, analyzes them against the job requirements, and provides a ranking based on skills, experience, education, and supporting evidence. The current prototype uses a Streamlit interface so recruiters can upload multiple resumes and quickly compare candidates.
+Recruiter AI Agent is an AI-powered recruitment assistant that helps recruiters screen and compare candidates based on a given job description.
 
-Problem Statement
+The system takes a job description and candidate resumes as input, analyzes the resumes, matches candidate skills with the job requirements, verifies supporting evidence, and ranks the candidates based on their overall suitability.
 
-Recruiters often have to manually go through many resumes and compare them with job requirements. This can take a lot of time and may make it difficult to consistently identify the most suitable candidates.
+## Problem Statement
 
-This project aims to automate the initial screening process by using AI to understand resumes and job requirements, match candidates, and provide a clear ranking for the recruiter.
+Recruiters often spend a lot of time manually reviewing resumes and comparing candidates with job requirements. This becomes difficult when there are multiple applicants.
 
-Current Features
-📄 Resume parsing from PDF files
-🔍 Skill extraction from resumes
-💼 Job requirement extraction
-🤝 Candidate-to-job matching
-🧠 Semantic skill matching
-✅ Skill evidence verification
-📊 Candidate scoring
-🏆 Candidate ranking
-👤 Candidate information extraction
-🎓 Education evaluation
-💻 Experience evaluation
-📑 Support for analyzing multiple resumes
-🌐 Streamlit-based recruiter interface
-How It Works
+The aim of this project is to automate the initial candidate screening process and help recruiters identify suitable candidates faster.
+
+## Current Features
+
+- Resume parsing from PDF files
+- Job requirement extraction
+- Candidate information extraction
+- Skill extraction
+- Candidate-to-job matching
+- Semantic skill matching
+- Skill evidence verification
+- Experience evaluation
+- Education evaluation
+- Candidate scoring
+- Candidate ranking
+- Multiple resume analysis
+- Streamlit-based user interface
+
+## How It Works
 
 The current workflow is:
 
-Job Description
-       ↓
-Job Requirement Extraction
-       ↓
-Candidate Resume Upload
-       ↓
-Resume Parsing
-       ↓
-Skill & Information Extraction
-       ↓
-Candidate Matching
-       ↓
-Skill Evidence Verification
-       ↓
-Scoring
-       ↓
-Candidate Ranking
-       ↓
-Recruiter Dashboard
+Job Description  
+↓  
+Job Requirement Extraction  
+↓  
+Resume Upload  
+↓  
+Resume Parsing  
+↓  
+Skill Extraction  
+↓  
+Candidate Matching  
+↓  
+Evidence Verification  
+↓  
+Candidate Scoring  
+↓  
+Candidate Ranking  
+↓  
+Recruiter Results
 
-The system doesn't rely only on keyword matching. It also uses semantic similarity and evidence from the resume to provide a more meaningful candidate score.
+## Technology Used
 
-Technology Stack
-Frontend
-Streamlit
-Backend
-Python
-LangChain (planned/integration stage)
-spaCy
-pandas
-PyMuPDF
-AI / NLP
-Sentence Transformers
-all-MiniLM-L6-v2
-Semantic similarity
-Skill and evidence matching
-Data
-SQLite (planned)
-PDF resumes
-Project Structure
+- Python
+- Streamlit
+- spaCy
+- pandas
+- PyMuPDF
+- Sentence Transformers
+- SQLite (planned)
+- LangChain (agent integration planned)
+
+## Project Structure
+
 Recruiter-AI-Agent-main/
-│
-├── app.py
-├── requirements.txt
-├── .gitignore
-│
-├── backend/
-│   ├── resume_parser.py
-│   ├── job_parser.py
-│   ├── matcher.py
-│   ├── scorer.py
-│   ├── ranker.py
-│   ├── skill_extractor.py
-│   ├── skill_retriever.py
-│   ├── semantic_matcher.py
-│   ├── semantic_retriever.py
-│   ├── verified_skill_evidence.py
-│   ├── evidence_scorer.py
-│   ├── experience_extractor.py
-│   ├── education_extractor.py
-│   └── ...
-│
-└── data/
+
+├── app.py  
+├── requirements.txt  
+├── .gitignore  
+│  
+├── backend/  
+│   ├── resume_parser.py  
+│   ├── job_parser.py  
+│   ├── matcher.py  
+│   ├── scorer.py  
+│   ├── ranker.py  
+│   ├── skill_extractor.py  
+│   ├── semantic_matcher.py  
+│   ├── evidence_scorer.py  
+│   ├── verified_skill_evidence.py  
+│   ├── experience_extractor.py  
+│   ├── education_extractor.py  
+│   └── ...  
+│  
+└── data/  
     └── resumes/
-Running the Project
-1. Clone the repository
+
+## How to Run
+
+### 1. Clone the repository
+
+```bash
 git clone https://github.com/sanjaykanna-hub/Recruiter-AI-Agent.git
 cd Recruiter-AI-Agent-main
 2. Create a virtual environment
 python -m venv venv
+3. Activate the virtual environment
 
-Activate it on Windows:
+For Windows:
 
 venv\Scripts\activate
-3. Install the dependencies
+4. Install dependencies
 pip install -r requirements.txt
-
-If any dependency is missing, it can also be installed using:
-
-python -m pip install <package-name>
-4. Start the Streamlit application
+5. Run the Streamlit application
 python -m streamlit run app.py
 
-Then open the local Streamlit URL shown in the terminal, normally:
+Open the local URL provided by Streamlit, usually:
 
 http://localhost:8501
-Using the Application
-Enter or paste a job description.
+How to Use
+Enter the job description in the application.
 Upload one or more candidate resumes in PDF format.
 Click Analyze Candidates.
-The system processes each resume.
+The system processes the resumes.
 Candidates are scored and ranked.
-Review the candidate details, matched skills, missing skills, and verified evidence.
+Review the matched skills, missing skills, scores, and verified evidence.
 Example
 
-For a React Frontend Developer position, the recruiter can provide requirements such as:
+For a React Frontend Developer role, the job description can contain requirements such as:
 
-Required:
-- React.js
-- JavaScript
-- HTML
-- CSS
-- Git
-- REST APIs
+Required Skills
+React.js
+JavaScript
+HTML
+CSS
+Git
+REST APIs
+Responsive Web Design
+Preferred Skills
+TypeScript
+Redux
+Next.js
+Node.js
+MongoDB
+Jest
 
-Preferred:
-- TypeScript
-- Redux
-- Next.js
-- Node.js
+The system compares these requirements with the uploaded resumes and generates a candidate ranking.
 
-The system then compares the uploaded resumes with these requirements and produces a candidate ranking.
+Current Status
 
-Project Status
-
-The project is currently being developed as a Track A recruitment AI prototype.
+The core candidate screening and matching workflow has been implemented.
 
 Completed
 Resume parsing
-Job requirement extraction
 Skill extraction
+Job requirement extraction
 Candidate matching
 Semantic matching
 Evidence verification
+Experience and education evaluation
 Candidate scoring
 Candidate ranking
 Streamlit screening interface
-Planned / Next Steps
-Integrate the screening workflow with a LangChain-based recruitment agent
-Add recruitment tools to the agent
-Add candidate pipeline management
-Add basic interview scheduling
-Improve the Streamlit dashboard
-Add report/export functionality
+Planned
+LangChain-based Recruiter AI Agent
+Recruitment tools integration
+Candidate pipeline management
+Basic interview scheduling
+Result export
+Improved recruiter dashboard
 Testing and deployment
-Future Agentic AI Workflow
+Project Goal
 
-The planned Recruiter AI Agent will use LangChain to connect the existing recruitment functions as tools.
-
-Recruiter
-    ↓
-Streamlit
-    ↓
-Recruiter AI Agent
-    ↓
-┌───────────────────────┐
-│ Recruitment Tools     │
-├───────────────────────┤
-│ Resume Parser         │
-│ Job Analyzer          │
-│ Candidate Matcher     │
-│ Evidence Verifier     │
-│ Candidate Evaluator   │
-│ Candidate Ranker      │
-└───────────────────────┘
-    ↓
-Recruitment Recommendation
-
-The goal is to allow the agent to coordinate these tools instead of requiring the recruiter to perform each screening step manually.
-
-Goal
-
-The overall goal of Recruiter AI Agent is to automate candidate screening, simplify the hiring workflow, and help recruiters make faster and more informed decisions.
+The goal of this project is to build an AI-powered recruitment assistant that automates candidate screening, simplifies the recruitment workflow, and helps recruiters make faster and more informed hiring decisions.
 
 Author
 
-Sanjaykanna,Surendaran
-
-This project is being developed as an AI-powered recruitment assistant with a focus on practical resume screening and candidate matching.
+Sanjaykanna , Surendaran
