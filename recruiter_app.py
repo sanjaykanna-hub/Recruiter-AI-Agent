@@ -1,1510 +1,4280 @@
-import os
-import sys
-
 import streamlit as st
+
 import pandas as pd
 
+import json
 
-# ============================================================
-# PROJECT PATH SETUP
-# ============================================================
-
-PROJECT_ROOT = os.path.dirname(
-    os.path.abspath(__file__)
-)
-
-BACKEND_DIR = os.path.join(
-    PROJECT_ROOT,
-    "backend"
-)
-
-if PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, PROJECT_ROOT)
-
-if BACKEND_DIR not in sys.path:
-    sys.path.insert(0, BACKEND_DIR)
+import re
 
 
-# ============================================================
-# BACKEND IMPORTS
-# ============================================================
+
+from datetime import date, time
+
+
 
 from backend.database import (
-    init_database,
-    create_job,
+
     get_jobs,
+
+    create_job,
+
     get_job,
+
+    update_job_criteria,
+
     get_applications_for_job,
+
     get_application,
-    update_application_status
+
+    update_application_status,
+
+    create_interview,
+
+    get_interviews_for_application
+
 )
 
 
-# ============================================================
-# DATABASE
-# ============================================================
 
-init_database()
 
 
 # ============================================================
-# STREAMLIT CONFIGURATION
+
+# PAGE CONFIGURATION
+
 # ============================================================
+
+
 
 st.set_page_config(
-    page_title="Recruiter AI - Recruiter Dashboard",
+
+    page_title="Recruiter AI Agent",
+
     page_icon="🤖",
+
     layout="wide"
+
 )
 
 
-# ============================================================
-# HEADER
+
+
+
 # ============================================================
 
-st.title("🤖 Recruiter AI")
+# HEADER
+
+# ============================================================
+
+
+
+st.title("🤖 Recruiter AI Agent")
+
+
 
 st.caption(
-    "AI-powered candidate screening, ranking and comparison dashboard"
+
+    "AI-powered candidate screening, ranking and recruitment management"
+
 )
 
 
-# ============================================================
-# SIDEBAR
+
+
+
 # ============================================================
 
-st.sidebar.title("Recruiter Panel")
+# SIDEBAR
+
+# ============================================================
+
+
+
+st.sidebar.title("Recruiter Portal")
+
+
 
 page = st.sidebar.radio(
+
     "Navigation",
+
     [
+
         "Dashboard",
+
         "Create Job",
+
         "Candidate Comparison"
+
     ]
+
 )
 
 
+
+
+
 # ============================================================
+
+# HELPER FUNCTIONS
+
+# ============================================================
+
+
+
+def format_score(value):
+
+    try:
+
+        return f"{float(value):.2f}%"
+
+    except Exception:
+
+        return "0.00%"
+
+
+
+
+
+def normalize_skill(skill):
+
+    return (
+
+        str(skill)
+
+        .strip()
+
+        .lower()
+
+        .replace(".", "")
+
+        .replace("-", "")
+
+        .replace("_", "")
+
+        .replace(" ", "")
+
+    )
+
+
+
+
+
+def skills_to_text(skills):
+
+    if not skills:
+
+        return "None"
+
+
+
+    return ", ".join(
+
+        str(skill)
+
+        for skill in skills
+
+    )
+
+
+
+
+
+def safe_json(value, default=None):
+
+
+
+    if default is None:
+
+        default = []
+
+
+
+    if value is None:
+
+        return default
+
+
+
+    if isinstance(value, (list, dict)):
+
+        return value
+
+
+
+    try:
+
+        return json.loads(value)
+
+    except Exception:
+
+        return default
+
+
+
+
+
+def make_clickable_url(url):
+
+
+
+    if not url:
+
+        return None
+
+
+
+    url = str(url).strip()
+
+
+
+    if not url:
+
+        return None
+
+
+
+    if not url.startswith(
+
+        ("http://", "https://")
+
+    ):
+
+        url = "https://" + url
+
+
+
+    return url
+
+
+
+
+
+def extract_resume_links(evaluation):
+    """Extract LinkedIn, GitHub, and other URLs from saved evaluation data."""
+    if not isinstance(evaluation, dict):
+        return {}
+    links = {}
+    for label, key in (("LinkedIn", "linkedin"), ("GitHub", "github")):
+        value = evaluation.get(key)
+        if isinstance(value, str) and value.strip():
+            url = make_clickable_url(value)
+            if url:
+                links[label] = url
+    text = json.dumps(evaluation, ensure_ascii=False)
+    patterns = {
+        "LinkedIn": r"(?:https?://)?(?:www\.)?linkedin\.com/[^\s\"'<>]+",
+        "GitHub": r"(?:https?://)?(?:www\.)?github\.com/[^\s\"'<>]+",
+    }
+    for label, pattern in patterns.items():
+        if label not in links:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                url = make_clickable_url(match.group(0).rstrip(".,);]}"))
+                if url:
+                    links[label] = url
+    urls = re.findall(r"https?://[^\s\"'<>]+", text, re.IGNORECASE)
+    other = []
+    for value in urls:
+        url = value.rstrip(".,);]}")
+        lower = url.lower()
+        if "linkedin.com" not in lower and "github.com" not in lower and url not in other:
+            other.append(url)
+    for index, url in enumerate(other[:5], start=1):
+        links[f"Website {index}"] = url
+    return links
+
+
+# ============================================================
+
 # CREATE JOB
+
 # ============================================================
+
+
 
 if page == "Create Job":
 
-    st.header("➕ Create New Job")
 
-    st.write(
-        "Create a job requirement that candidates can apply for "
-        "through the Candidate Portal."
-    )
 
-    job_title = st.text_input(
+    st.header("Create New Job")
+
+
+
+    title = st.text_input(
+
         "Job Title",
+
         placeholder="React Frontend Developer"
+
     )
 
-    job_description = st.text_area(
-        "Complete Job Description",
-        height=450,
+
+
+    description = st.text_area(
+
+        "Job Description",
+
+        height=250,
+
         placeholder=(
-            "Paste the complete job description here...\n\n"
-            "Include required skills, preferred skills, "
-            "responsibilities, qualifications and experience."
+
+            "Enter the complete job description, "
+
+            "responsibilities and qualifications..."
+
         )
+
     )
+
+
+
+    st.subheader("Screening Criteria")
+
+
+
+    minimum_score = st.slider(
+
+        "Minimum Screening Score",
+
+        min_value=0,
+
+        max_value=100,
+
+        value=70,
+
+        step=5
+
+    )
+
+
+
+    required_text = st.text_area(
+
+        "Required Skills",
+
+        placeholder=(
+
+            "React.js\n"
+
+            "JavaScript\n"
+
+            "HTML\n"
+
+            "CSS\n"
+
+            "Git"
+
+        ),
+
+        height=150
+
+    )
+
+
+
+    preferred_text = st.text_area(
+
+        "Preferred Skills",
+
+        placeholder=(
+
+            "TypeScript\n"
+
+            "Redux\n"
+
+            "Next.js"
+
+        ),
+
+        height=120
+
+    )
+
+
 
     if st.button(
+
         "Create Job",
-        type="primary",
-        use_container_width=True
+
+        type="primary"
+
     ):
 
-        if not job_title.strip():
+
+
+        if not title.strip():
+
+
 
             st.error(
+
                 "Please enter a job title."
+
             )
 
-        elif not job_description.strip():
+
+
+        elif not description.strip():
+
+
 
             st.error(
+
                 "Please enter a job description."
+
             )
+
+
 
         else:
 
+
+
+            required_skills = [
+
+                skill.strip()
+
+                for skill in required_text.splitlines()
+
+                if skill.strip()
+
+            ]
+
+
+
+            preferred_skills = [
+
+                skill.strip()
+
+                for skill in preferred_text.splitlines()
+
+                if skill.strip()
+
+            ]
+
+
+
             job_id = create_job(
-                job_title.strip(),
-                job_description.strip()
+
+                title=title.strip(),
+
+                description=description.strip(),
+
+                minimum_score=minimum_score,
+
+                required_skills=required_skills,
+
+                preferred_skills=preferred_skills
+
             )
+
+
 
             st.success(
+
                 f"Job created successfully! Job ID: {job_id}"
-            )
 
-            st.info(
-                "Candidates can now apply for this job "
-                "through the Candidate Portal."
             )
 
 
+
+
+
 # ============================================================
-# RECRUITER DASHBOARD
+
+# DASHBOARD
+
 # ============================================================
+
+
 
 elif page == "Dashboard":
 
-    st.header("📊 Recruiter Dashboard")
 
-    # --------------------------------------------------------
-    # GET ACTIVE JOBS
-    # --------------------------------------------------------
 
-    jobs = get_jobs(
-        active_only=True
-    )
+    st.header("Recruiter Dashboard")
+
+
+
+    jobs = get_jobs()
+
+
 
     if not jobs:
 
+
+
         st.info(
-            "No active jobs are available."
+
+            "No jobs have been created yet. "
+
+            "Create a job first."
+
         )
 
-        st.write(
-            "Go to **Create Job** to create your first job."
-        )
+
 
         st.stop()
 
-    # --------------------------------------------------------
-    # JOB SELECTION
-    # --------------------------------------------------------
+
 
     job_options = {
-        f"{job['title']} — Job #{job['job_id']}":
-        job["job_id"]
+
+        f"{job['title']} (ID: {job['id']})":
+
+        job["id"]
+
         for job in jobs
+
     }
 
+
+
     selected_job_label = st.selectbox(
+
         "Select Job",
+
         list(job_options.keys())
+
     )
+
+
 
     selected_job_id = job_options[
+
         selected_job_label
+
     ]
 
+
+
     job = get_job(
+
         selected_job_id
+
     )
 
-    # --------------------------------------------------------
-    # JOB HEADER
-    # --------------------------------------------------------
 
-    st.subheader(
-        f"💼 {job['title']}"
-    )
 
-    with st.expander(
-        "View Job Description"
-    ):
+    if not job:
 
-        st.write(
-            job["description"]
+
+
+        st.error(
+
+            "Unable to load selected job."
+
         )
 
-    # --------------------------------------------------------
-    # GET ALL APPLICATIONS
-    # --------------------------------------------------------
-    #
-    # IMPORTANT:
-    #
-    # This retrieves EVERY application stored for this job.
-    #
-    # Therefore every new candidate is automatically included
-    # in the cumulative ranking.
-    #
-    # --------------------------------------------------------
+
+
+        st.stop()
+
+
+
+
+
+    # ========================================================
+
+    # JOB INFORMATION
+
+    # ========================================================
+
+
+
+    st.subheader(
+
+        f"📋 {job['title']}"
+
+    )
+
+
+
+    with st.expander(
+
+        "View Job Description",
+
+        expanded=True
+
+    ):
+
+
+
+        st.write(
+
+            job["description"]
+
+        )
+
+
+
+
+
+    # ========================================================
+
+    # SCREENING CRITERIA
+
+    # ========================================================
+
+
+
+    st.subheader(
+
+        "⚙️ Screening Criteria"
+
+    )
+
+
+
+    criteria_col1, criteria_col2 = st.columns(2)
+
+
+
+    with criteria_col1:
+
+
+
+        st.write(
+
+            f"**Minimum Score:** "
+
+            f"{job['minimum_score']}%"
+
+        )
+
+
+
+        st.write(
+
+            "**Required Skills:**"
+
+        )
+
+
+
+        if job["required_skills"]:
+
+
+
+            for skill in job["required_skills"]:
+
+
+
+                st.write(
+
+                    f"• {skill}"
+
+                )
+
+
+
+        else:
+
+
+
+            st.write("None")
+
+
+
+
+
+    with criteria_col2:
+
+
+
+        st.write(
+
+            "**Preferred Skills:**"
+
+        )
+
+
+
+        if job["preferred_skills"]:
+
+
+
+            for skill in job["preferred_skills"]:
+
+
+
+                st.write(
+
+                    f"• {skill}"
+
+                )
+
+
+
+        else:
+
+
+
+            st.write("None")
+
+
+
+
+
+    # ========================================================
+
+    # UPDATE CRITERIA
+
+    # ========================================================
+
+
+
+    with st.expander(
+
+        "Edit Screening Criteria"
+
+    ):
+
+
+
+        new_minimum_score = st.slider(
+
+            "Minimum Score",
+
+            min_value=0,
+
+            max_value=100,
+
+            value=int(
+
+                job["minimum_score"]
+
+            ),
+
+            step=5,
+
+            key=f"minimum_{job['id']}"
+
+        )
+
+
+
+        new_required_text = st.text_area(
+
+            "Required Skills — one per line",
+
+            value="\n".join(
+
+                job["required_skills"]
+
+            ),
+
+            key=f"required_{job['id']}"
+
+        )
+
+
+
+        new_preferred_text = st.text_area(
+
+            "Preferred Skills — one per line",
+
+            value="\n".join(
+
+                job["preferred_skills"]
+
+            ),
+
+            key=f"preferred_{job['id']}"
+
+        )
+
+
+
+        if st.button(
+
+            "Save Screening Criteria",
+
+            key=f"save_criteria_{job['id']}"
+
+        ):
+
+
+
+            new_required = [
+
+                skill.strip()
+
+                for skill in new_required_text.splitlines()
+
+                if skill.strip()
+
+            ]
+
+
+
+            new_preferred = [
+
+                skill.strip()
+
+                for skill in new_preferred_text.splitlines()
+
+                if skill.strip()
+
+            ]
+
+
+
+            update_job_criteria(
+
+                job_id=job["id"],
+
+                minimum_score=new_minimum_score,
+
+                required_skills=new_required,
+
+                preferred_skills=new_preferred
+
+            )
+
+
+
+            st.success(
+
+                "Screening criteria updated."
+
+            )
+
+
+
+            st.rerun()
+
+
+
+
+
+    # ========================================================
+
+    # APPLICATIONS
+
+    # ========================================================
+
+
 
     applications = get_applications_for_job(
-        selected_job_id
+
+        job["id"]
+
     )
 
-    # --------------------------------------------------------
-    # METRICS
-    # --------------------------------------------------------
 
-    total_candidates = len(
-        applications
+
+    st.subheader(
+
+        "Candidate Pipeline"
+
     )
 
-    shortlisted = len([
-        candidate
-        for candidate in applications
-        if candidate["status"] == "Shortlisted"
-    ])
 
-    under_review = len([
-        candidate
-        for candidate in applications
-        if candidate["status"] == "Under Review"
-    ])
-
-    not_eligible = len([
-        candidate
-        for candidate in applications
-        if candidate["status"] == "Not Eligible"
-    ])
-
-    st.divider()
-
-    metric1, metric2, metric3, metric4 = st.columns(4)
-
-    metric1.metric(
-        "👥 Total Applicants",
-        total_candidates
-    )
-
-    metric2.metric(
-        "✅ Shortlisted",
-        shortlisted
-    )
-
-    metric3.metric(
-        "⏳ Under Review",
-        under_review
-    )
-
-    metric4.metric(
-        "❌ Not Eligible",
-        not_eligible
-    )
-
-    # --------------------------------------------------------
-    # NO APPLICATIONS
-    # --------------------------------------------------------
 
     if not applications:
 
-        st.divider()
+
 
         st.info(
+
             "No candidates have applied for this job yet."
+
         )
 
-        st.write(
-            "Share the Candidate Portal with applicants "
-            "so they can upload their resumes."
-        )
+
 
         st.stop()
 
+
+
+
+
     # ========================================================
-    # CANDIDATE RANKING
+
+    # METRICS
+
     # ========================================================
 
-    st.divider()
-
-    st.header("🏆 Candidate Ranking")
-
-    st.caption(
-        "Candidates are ranked against all applications "
-        "received for this job."
-    )
-
-    # --------------------------------------------------------
-    # RANKING DATA
-    # --------------------------------------------------------
-
-    ranking_data = []
-
-    for candidate in applications:
-
-        ranking_data.append({
-
-            "Rank":
-                candidate["rank"],
-
-            "Candidate":
-                candidate["name"],
-
-            "Application ID":
-                f"APP-{candidate['application_id']:04d}",
-
-            "Overall Score":
-                round(
-                    float(
-                        candidate["overall_score"] or 0
-                    ),
-                    2
-                ),
-
-            "Required Skills":
-                round(
-                    float(
-                        candidate["required_skill_score"] or 0
-                    ),
-                    2
-                ),
-
-            "Preferred Skills":
-                round(
-                    float(
-                        candidate["preferred_skill_score"] or 0
-                    ),
-                    2
-                ),
-
-            "Experience":
-                round(
-                    float(
-                        candidate["experience_score"] or 0
-                    ),
-                    2
-                ),
-
-            "Education":
-                round(
-                    float(
-                        candidate["education_score"] or 0
-                    ),
-                    2
-                ),
-
-            "Evidence":
-                round(
-                    float(
-                        candidate["evidence_score"] or 0
-                    ),
-                    2
-                ),
-
-            "Status":
-                candidate["status"]
-        })
 
 
-    ranking_df = pd.DataFrame(
-        ranking_data
+    total = len(applications)
+
+
+
+    shortlisted = sum(
+
+        1
+
+        for app in applications
+
+        if app["status"] == "Shortlisted"
+
     )
 
 
-    # --------------------------------------------------------
-    # DISPLAY RANKING
-    # --------------------------------------------------------
 
-    st.dataframe(
-        ranking_df,
-        use_container_width=True,
-        hide_index=True
+    under_review = sum(
+
+        1
+
+        for app in applications
+
+        if app["status"] == "Under Review"
+
     )
 
 
+
+    not_eligible = sum(
+
+        1
+
+        for app in applications
+
+        if app["status"] == "Not Eligible"
+
+    )
+
+
+
+    col1, col2, col3, col4 = st.columns(4)
+
+
+
+    col1.metric(
+
+        "Total Applicants",
+
+        total
+
+    )
+
+
+
+    col2.metric(
+
+        "Shortlisted",
+
+        shortlisted
+
+    )
+
+
+
+    col3.metric(
+
+        "Under Review",
+
+        under_review
+
+    )
+
+
+
+    col4.metric(
+
+        "Not Eligible",
+
+        not_eligible
+
+    )
+
+
+
+
+
     # ========================================================
-    # SCORE CHART
+
+    # FILTERS
+
     # ========================================================
+
+
 
     st.subheader(
-        "📈 Candidate Score Distribution"
-    )
 
-    chart_data = pd.DataFrame({
+        "🔎 Candidate Filters"
 
-        "Candidate": [
-            (
-                f"#{candidate['rank']} "
-                f"{candidate['name']} "
-                f"(APP-{candidate['application_id']:04d})"
-            )
-            for candidate in applications
-        ],
-
-        "Overall Score": [
-            float(
-                candidate["overall_score"] or 0
-            )
-            for candidate in applications
-        ]
-    })
-
-
-    chart_data = chart_data.set_index(
-        "Candidate"
     )
 
 
-    st.bar_chart(
-        chart_data
-    )
+
+    filter_col1, filter_col2, filter_col3 = st.columns(3)
 
 
-    # ========================================================
-    # CANDIDATE DETAILS
-    # ========================================================
 
-    st.divider()
-
-    st.header("🔎 Detailed Candidate Evaluation")
-
-    candidate_options = {}
-
-    for candidate in applications:
-
-        application_id = candidate[
-            "application_id"
-        ]
-
-        rank = candidate[
-            "rank"
-        ]
-
-        name = candidate[
-            "name"
-        ]
-
-        score = float(
-            candidate[
-                "overall_score"
-            ] or 0
-        )
-
-        label = (
-            f"#{rank} — {name} "
-            f"(APP-{application_id:04d}) "
-            f"— {score:.2f}%"
-        )
-
-        candidate_options[
-            label
-        ] = application_id
+    with filter_col1:
 
 
-    selected_candidate_label = st.selectbox(
-        "Select Candidate",
-        list(candidate_options.keys())
-    )
 
+        status_filter = st.selectbox(
 
-    selected_application_id = candidate_options[
-        selected_candidate_label
-    ]
-
-
-    candidate = get_application(
-        selected_application_id
-    )
-
-
-    if candidate:
-
-        # ----------------------------------------------------
-        # CANDIDATE HEADER
-        # ----------------------------------------------------
-
-        candidate_rank = next(
-            (
-                item["rank"]
-                for item in applications
-                if item["application_id"]
-                == selected_application_id
-            ),
-            "-"
-        )
-
-
-        candidate_score = float(
-            candidate["overall_score"] or 0
-        )
-
-
-        st.subheader(
-            f"#{candidate_rank} — "
-            f"{candidate['name']}"
-        )
-
-
-        # ----------------------------------------------------
-        # SUMMARY METRICS
-        # ----------------------------------------------------
-
-        col1, col2, col3, col4 = st.columns(4)
-
-
-        col1.metric(
-            "Rank",
-            candidate_rank
-        )
-
-
-        col2.metric(
-            "Overall Score",
-            f"{candidate_score:.2f}%"
-        )
-
-
-        col3.metric(
             "Status",
-            candidate["status"]
+
+            [
+
+                "All",
+
+                "Shortlisted",
+
+                "Under Review",
+
+                "Not Eligible"
+
+            ]
+
         )
 
 
-        col4.metric(
-            "Application ID",
-            f"APP-{selected_application_id:04d}"
+
+    with filter_col2:
+
+
+
+        minimum_filter = st.slider(
+
+            "Minimum Score",
+
+            min_value=0,
+
+            max_value=100,
+
+            value=0,
+
+            step=5
+
         )
 
 
-        st.write(
-            f"**Email:** {candidate['email']}"
-        )
+
+    with filter_col3:
 
 
-        st.write(
-            f"**Resume:** {candidate['resume_filename']}"
-        )
 
+        sort_option = st.selectbox(
 
-        # ----------------------------------------------------
-        # SCORE BREAKDOWN
-        # ----------------------------------------------------
+            "Sort By",
 
-        st.subheader(
-            "📊 AI Score Breakdown"
-        )
+            [
 
-
-        score_breakdown = pd.DataFrame({
-
-            "Evaluation": [
+                "Overall Score",
 
                 "Required Skills",
-
-                "Preferred Skills",
-
-                "Overall Skills",
-
-                "Keyword Match",
-
-                "Evidence Verification",
-
-                "Hybrid Skills",
 
                 "Experience",
 
                 "Education",
 
-                "Final Candidate Score"
-            ],
+                "Evidence"
 
-            "Score": [
-
-                candidate[
-                    "required_skill_score"
-                ],
-
-                candidate[
-                    "preferred_skill_score"
-                ],
-
-                candidate[
-                    "overall_skill_score"
-                ],
-
-                candidate[
-                    "keyword_score"
-                ],
-
-                candidate[
-                    "evidence_score"
-                ],
-
-                candidate[
-                    "hybrid_skill_score"
-                ],
-
-                candidate[
-                    "experience_score"
-                ],
-
-                candidate[
-                    "education_score"
-                ],
-
-                candidate[
-                    "final_score"
-                ]
             ]
-        })
 
-
-        score_breakdown[
-            "Score"
-        ] = score_breakdown[
-            "Score"
-        ].apply(
-            lambda value:
-            f"{float(value or 0):.2f}%"
         )
 
 
-        st.dataframe(
-            score_breakdown,
-            use_container_width=True,
-            hide_index=True
-        )
 
 
-        # ----------------------------------------------------
-        # SKILL ANALYSIS
-        # ----------------------------------------------------
 
-        skill_col1, skill_col2 = st.columns(2)
+    filtered = applications.copy()
 
 
-        with skill_col1:
 
-            st.subheader(
-                "✅ Matched Skills"
-            )
+    if status_filter != "All":
 
 
-            matched_skills = candidate.get(
-                "matched_skills",
-                []
-            )
 
+        filtered = [
 
-            if matched_skills:
+            app
 
-                for skill in matched_skills:
+            for app in filtered
 
-                    st.success(
-                        str(skill)
-                    )
+            if app["status"] == status_filter
 
-            else:
-
-                st.info(
-                    "No matched skills available."
-                )
-
-
-        with skill_col2:
-
-            st.subheader(
-                "❌ Missing Skills"
-            )
-
-
-            missing_skills = candidate.get(
-                "missing_skills",
-                []
-            )
-
-
-            if missing_skills:
-
-                for skill in missing_skills:
-
-                    st.warning(
-                        str(skill)
-                    )
-
-            else:
-
-                st.success(
-                    "No missing skills."
-                )
-
-
-        # ----------------------------------------------------
-        # EVIDENCE
-        # ----------------------------------------------------
-
-        st.subheader(
-            "🔎 Evidence Analysis"
-        )
-
-
-        evidence = candidate.get(
-            "evidence",
-            []
-        )
-
-
-        if evidence:
-
-            st.json(
-                evidence
-            )
-
-        else:
-
-            st.info(
-                "No evidence details available."
-            )
-
-
-        # ----------------------------------------------------
-        # RECRUITER STATUS UPDATE
-        # ----------------------------------------------------
-
-        st.subheader(
-            "👤 Recruiter Decision"
-        )
-
-
-        statuses = [
-            "Shortlisted",
-            "Under Review",
-            "Not Eligible"
         ]
 
 
-        current_status = candidate[
-            "status"
-        ]
 
+    filtered = [
 
-        if current_status in statuses:
+        app
 
-            default_index = statuses.index(
-                current_status
-            )
+        for app in filtered
 
-        else:
+        if float(
 
-            default_index = 1
+            app.get(
 
+                "final_candidate_score",
 
-        new_status = st.selectbox(
-            "Application Status",
-            statuses,
-            index=default_index
-        )
+                0
 
+            ) or 0
 
-        if st.button(
-            "Update Candidate Status",
-            type="primary"
-        ):
+        ) >= minimum_filter
 
-            update_application_status(
-                selected_application_id,
-                new_status
-            )
-
-            st.success(
-                "Candidate status updated successfully."
-            )
-
-            st.rerun()
-
-
-# ============================================================
-# CANDIDATE COMPARISON
-# ============================================================
-
-elif page == "Candidate Comparison":
-
-    st.header("⚖️ Candidate Comparison")
-
-    st.caption(
-        "Compare 2–4 candidates who applied for the same job."
-    )
-
-    # --------------------------------------------------------
-    # GET JOBS
-    # --------------------------------------------------------
-
-    jobs = get_jobs(
-        active_only=True
-    )
-
-
-    if not jobs:
-
-        st.info(
-            "No active jobs are available."
-        )
-
-        st.stop()
-
-
-    # --------------------------------------------------------
-    # JOB SELECTION
-    # --------------------------------------------------------
-
-    job_options = {
-        f"{job['title']} — Job #{job['job_id']}":
-        job["job_id"]
-        for job in jobs
-    }
-
-
-    selected_job_label = st.selectbox(
-        "Select Job",
-        list(job_options.keys())
-    )
-
-
-    selected_job_id = job_options[
-        selected_job_label
     ]
 
 
-    selected_job = get_job(
-        selected_job_id
-    )
 
 
-    # --------------------------------------------------------
-    # GET ALL APPLICATIONS
-    # --------------------------------------------------------
 
-    applications = get_applications_for_job(
-        selected_job_id
-    )
+    sort_mapping = {
 
 
-    if len(applications) < 2:
 
-        st.info(
-            "At least two candidates are required "
-            "for comparison."
-        )
+        "Overall Score":
 
-        st.stop()
+            "final_candidate_score",
 
 
-    # --------------------------------------------------------
-    # UNIQUE CANDIDATE LABELS
-    # --------------------------------------------------------
-    #
-    # Application ID is included so candidates with the same
-    # name do not create duplicate DataFrame columns.
-    #
-    # Example:
-    #
-    # Sanjaykanna SV (APP-0001)
-    # Sanjaykanna SV (APP-0004)
-    #
-    # --------------------------------------------------------
 
-    candidate_options = {}
+        "Required Skills":
 
+            "required_skill_score",
 
-    for candidate in applications:
 
-        application_id = candidate[
-            "application_id"
-        ]
 
-        rank = candidate[
-            "rank"
-        ]
+        "Experience":
 
-        name = candidate[
-            "name"
-        ]
+            "experience_score",
 
-        score = float(
-            candidate[
-                "overall_score"
-            ] or 0
-        )
 
 
-        label = (
-            f"#{rank} — "
-            f"{name} "
-            f"(APP-{application_id:04d}) "
-            f"— {score:.2f}%"
-        )
+        "Education":
 
+            "education_score",
 
-        candidate_options[
-            label
-        ] = application_id
 
 
-    # --------------------------------------------------------
-    # MULTI SELECT
-    # --------------------------------------------------------
+        "Evidence":
 
-    selected_candidates = st.multiselect(
-        "Select 2–4 candidates",
-        list(candidate_options.keys()),
-        max_selections=4
-    )
+            "evidence_score"
 
-
-    if len(selected_candidates) < 2:
-
-        st.info(
-            "Select at least two candidates "
-            "to compare them."
-        )
-
-        st.stop()
-
-
-    # --------------------------------------------------------
-    # LOAD RECORDS
-    # --------------------------------------------------------
-
-    selected_records = []
-
-
-    for label in selected_candidates:
-
-        application_id = candidate_options[
-            label
-        ]
-
-
-        record = get_application(
-            application_id
-        )
-
-
-        if record:
-
-            selected_records.append(
-                record
-            )
-
-
-    if len(selected_records) < 2:
-
-        st.error(
-            "Unable to load enough candidate records."
-        )
-
-        st.stop()
-
-
-    # ========================================================
-    # COMPARISON HEADER
-    # ========================================================
-
-    st.divider()
-
-
-    st.subheader(
-        f"📊 Comparing Candidates — "
-        f"{selected_job['title']}"
-    )
-
-
-    # --------------------------------------------------------
-    # UNIQUE COLUMN NAMES
-    # --------------------------------------------------------
-
-    comparison_names = []
-
-
-    for candidate in selected_records:
-
-        unique_name = (
-            f"{candidate['name']} "
-            f"(APP-{candidate['application_id']:04d})"
-        )
-
-
-        comparison_names.append(
-            unique_name
-        )
-
-
-    # ========================================================
-    # COMPARISON DATA
-    # ========================================================
-
-    comparison_data = {
-
-        "Required Skills": [],
-
-        "Preferred Skills": [],
-
-        "Overall Skills": [],
-
-        "Keyword Match": [],
-
-        "Evidence": [],
-
-        "Hybrid Skills": [],
-
-        "Experience": [],
-
-        "Education": [],
-
-        "Final Score": []
     }
 
 
-    for candidate in selected_records:
 
-        comparison_data[
-            "Required Skills"
-        ].append(
-            float(
-                candidate[
-                    "required_skill_score"
-                ] or 0
-            )
-        )
+    sort_key = sort_mapping[
+
+        sort_option
+
+    ]
 
 
-        comparison_data[
-            "Preferred Skills"
-        ].append(
-            float(
-                candidate[
-                    "preferred_skill_score"
-                ] or 0
-            )
-        )
 
+    filtered.sort(
 
-        comparison_data[
-            "Overall Skills"
-        ].append(
-            float(
-                candidate[
-                    "overall_skill_score"
-                ] or 0
-            )
-        )
+        key=lambda x: float(
 
+            x.get(
 
-        comparison_data[
-            "Keyword Match"
-        ].append(
-            float(
-                candidate[
-                    "keyword_score"
-                ] or 0
-            )
-        )
+                sort_key,
 
+                0
 
-        comparison_data[
-            "Evidence"
-        ].append(
-            float(
-                candidate[
-                    "evidence_score"
-                ] or 0
-            )
-        )
+            ) or 0
 
+        ),
 
-        comparison_data[
-            "Hybrid Skills"
-        ].append(
-            float(
-                candidate[
-                    "hybrid_skill_score"
-                ] or 0
-            )
-        )
+        reverse=True
 
-
-        comparison_data[
-            "Experience"
-        ].append(
-            float(
-                candidate[
-                    "experience_score"
-                ] or 0
-            )
-        )
-
-
-        comparison_data[
-            "Education"
-        ].append(
-            float(
-                candidate[
-                    "education_score"
-                ] or 0
-            )
-        )
-
-
-        comparison_data[
-            "Final Score"
-        ].append(
-            float(
-                candidate[
-                    "final_score"
-                ] or 0
-            )
-        )
-
-
-    # ========================================================
-    # DATAFRAME
-    # ========================================================
-
-    comparison_df = pd.DataFrame(
-        comparison_data,
-        index=comparison_names
     )
 
 
-    # Transpose:
-    #
-    # Evaluation | Candidate A | Candidate B
-    #
-    comparison_df = comparison_df.T
 
-
-    # --------------------------------------------------------
-    # FORMAT
-    # --------------------------------------------------------
-
-    comparison_display_df = (
-        comparison_df.copy()
-    )
-
-
-    for column in comparison_display_df.columns:
-
-        comparison_display_df[
-            column
-        ] = comparison_display_df[
-            column
-        ].apply(
-            lambda value:
-            f"{float(value):.2f}%"
-        )
-
-
-    # --------------------------------------------------------
-    # DISPLAY
-    # --------------------------------------------------------
-
-    st.dataframe(
-        comparison_display_df,
-        use_container_width=True
-    )
 
 
     # ========================================================
-    # SCORE CHART
-    # ========================================================
 
-    st.subheader(
-        "📈 Overall Candidate Scores"
-    )
-
-
-    chart_data = pd.DataFrame({
-
-        "Candidate": [
-
-            (
-                f"#{candidate['application_id']} "
-                f"{candidate['name']} "
-                f"(APP-{candidate['application_id']:04d})"
-            )
-
-            for candidate in selected_records
-        ],
-
-        "Overall Score": [
-
-            float(
-                candidate[
-                    "final_score"
-                ] or 0
-            )
-
-            for candidate in selected_records
-        ]
-    })
-
-
-    chart_data = chart_data.set_index(
-        "Candidate"
-    )
-
-
-    st.bar_chart(
-        chart_data
-    )
-
+    # RANKING TABLE
 
     # ========================================================
-    # DETAILED COMPARISON
-    # ========================================================
 
-    st.divider()
 
 
     st.subheader(
-        "🔎 Detailed Candidate Analysis"
+
+        "🏆 Candidate Ranking"
+
     )
 
 
-    for candidate in selected_records:
 
-        application_id = candidate[
-            "application_id"
-        ]
+    if not filtered:
 
-        candidate_name = candidate[
-            "name"
-        ]
 
-        final_score = float(
-            candidate[
-                "final_score"
-            ] or 0
+
+        st.warning(
+
+            "No candidates match the current filters."
+
         )
 
 
-        rank = next(
-            (
-                item["rank"]
-                for item in applications
-                if item["application_id"]
-                == application_id
-            ),
-            "-"
-        )
+
+    else:
 
 
-        with st.expander(
-            f"#{rank} — "
-            f"{candidate_name} "
-            f"(APP-{application_id:04d}) "
-            f"— {final_score:.2f}%",
-            expanded=True
+
+        table_data = []
+
+
+
+        for rank, candidate in enumerate(
+
+            filtered,
+
+            start=1
+
         ):
 
-            # ------------------------------------------------
-            # SUMMARY
-            # ------------------------------------------------
-
-            col1, col2, col3, col4 = st.columns(4)
 
 
-            col1.metric(
-                "Rank",
-                rank
-            )
+            table_data.append({
 
 
-            col2.metric(
-                "Overall Score",
-                f"{final_score:.2f}%"
-            )
+
+                "Rank":
+
+                    rank,
 
 
-            col3.metric(
-                "Status",
-                candidate["status"]
-            )
+
+                "Candidate":
+
+                    candidate["name"],
 
 
-            col4.metric(
-                "Application ID",
-                f"APP-{application_id:04d}"
-            )
+
+                "Application ID":
+
+                    candidate["application_id"],
 
 
-            st.write(
-                f"**Email:** {candidate['email']}"
-            )
+
+                "Overall Score":
+
+                    format_score(
+
+                        candidate[
+
+                            "final_candidate_score"
+
+                        ]
+
+                    ),
 
 
-            st.write(
-                f"**Resume:** "
-                f"{candidate['resume_filename']}"
-            )
+
+                "Required Skills":
+
+                    format_score(
+
+                        candidate[
+
+                            "required_skill_score"
+
+                        ]
+
+                    ),
 
 
-            # ------------------------------------------------
-            # SCORE BREAKDOWN
-            # ------------------------------------------------
 
-            st.markdown(
-                "### 📊 Score Breakdown"
-            )
+                "Preferred Skills":
+
+                    format_score(
+
+                        candidate[
+
+                            "preferred_skill_score"
+
+                        ]
+
+                    ),
 
 
-            detailed_scores = pd.DataFrame({
 
-                "Evaluation": [
+                "Experience":
 
-                    "Required Skills",
+                    format_score(
 
-                    "Preferred Skills",
+                        candidate[
 
-                    "Overall Skills",
+                            "experience_score"
 
-                    "Keyword Match",
+                        ]
 
-                    "Evidence",
+                    ),
 
-                    "Hybrid Skills",
 
-                    "Experience",
 
-                    "Education",
+                "Education":
 
-                    "Final Score"
-                ],
+                    format_score(
 
-                "Score": [
+                        candidate[
 
-                    candidate[
-                        "required_skill_score"
-                    ],
+                            "education_score"
 
-                    candidate[
-                        "preferred_skill_score"
-                    ],
+                        ]
 
-                    candidate[
-                        "overall_skill_score"
-                    ],
+                    ),
 
-                    candidate[
-                        "keyword_score"
-                    ],
 
-                    candidate[
-                        "evidence_score"
-                    ],
 
-                    candidate[
-                        "hybrid_skill_score"
-                    ],
+                "Evidence":
 
-                    candidate[
-                        "experience_score"
-                    ],
+                    format_score(
 
-                    candidate[
-                        "education_score"
-                    ],
+                        candidate[
 
-                    candidate[
-                        "final_score"
-                    ]
-                ]
+                            "evidence_score"
+
+                        ]
+
+                    ),
+
+
+
+                "Status":
+
+                    candidate["status"]
+
             })
 
 
-            detailed_scores[
-                "Score"
-            ] = detailed_scores[
-                "Score"
-            ].apply(
-                lambda value:
-                f"{float(value or 0):.2f}%"
+
+        df = pd.DataFrame(
+
+            table_data
+
+        )
+
+
+
+        st.dataframe(
+
+            df,
+
+            use_container_width=True,
+
+            hide_index=True
+
+        )
+
+
+
+
+
+    # ========================================================
+
+    # SCORE CHART
+
+    # ========================================================
+
+
+
+    if filtered:
+
+
+
+        st.subheader(
+
+            "📊 Candidate Scores"
+
+        )
+
+
+
+        chart_data = pd.DataFrame({
+
+
+
+            "Candidate": [
+
+                f"#{index + 1} "
+
+                f"{candidate['name']}"
+
+                for index, candidate
+
+                in enumerate(filtered)
+
+            ],
+
+
+
+            "Score": [
+
+                float(
+
+                    candidate.get(
+
+                        "final_candidate_score",
+
+                        0
+
+                    ) or 0
+
+                )
+
+                for candidate in filtered
+
+            ]
+
+        })
+
+
+
+        chart_data = chart_data.set_index(
+
+            "Candidate"
+
+        )
+
+
+
+        st.bar_chart(
+
+            chart_data
+
+        )
+
+
+
+
+
+    # ========================================================
+
+    # CANDIDATE DETAILS
+
+    # ========================================================
+
+
+
+    st.subheader(
+
+        "👤 Candidate Details"
+
+    )
+
+
+
+    candidate_options = {
+
+
+
+        f"{candidate['name']} "
+
+        f"(Application #{candidate['application_id']})":
+
+        candidate["application_id"]
+
+
+
+        for candidate in filtered
+
+    }
+
+
+
+    if candidate_options:
+
+
+
+        selected_candidate_label = st.selectbox(
+
+            "Select Candidate",
+
+            list(candidate_options.keys())
+
+        )
+
+
+
+        selected_application_id = candidate_options[
+
+            selected_candidate_label
+
+        ]
+
+
+
+        candidate = get_application(
+
+            selected_application_id
+
+        )
+
+
+
+        if candidate:
+
+
+
+            st.markdown(
+
+                f"### {candidate['name']}"
+
             )
+
+
+
+            info_col1, info_col2, info_col3 = st.columns(3)
+
+
+
+            with info_col1:
+
+
+
+                st.write(
+
+                    f"**Email:** "
+
+                    f"{candidate['email']}"
+
+                )
+
+
+
+            with info_col2:
+
+
+
+                st.write(
+
+                    f"**Application ID:** "
+
+                    f"{candidate['id']}"
+
+                )
+
+
+
+            with info_col3:
+
+
+
+                st.write(
+
+                    f"**Status:** "
+
+                    f"{candidate['status']}"
+
+                )
+
+
+
+
+
+            # =================================================
+
+            # SCORE BREAKDOWN
+
+            # =================================================
+
+
+
+            st.subheader(
+
+                "Score Breakdown"
+
+            )
+
+
+
+            score_data = {
+
+
+
+                "Required Skills":
+
+                    candidate[
+
+                        "required_skill_score"
+
+                    ],
+
+
+
+                "Preferred Skills":
+
+                    candidate[
+
+                        "preferred_skill_score"
+
+                    ],
+
+
+
+                "Overall Skills":
+
+                    candidate[
+
+                        "overall_skill_score"
+
+                    ],
+
+
+
+                "Keyword":
+
+                    candidate[
+
+                        "keyword_score"
+
+                    ],
+
+
+
+                "Evidence":
+
+                    candidate[
+
+                        "evidence_score"
+
+                    ],
+
+
+
+                "Hybrid Skills":
+
+                    candidate[
+
+                        "hybrid_skill_score"
+
+                    ],
+
+
+
+                "Experience":
+
+                    candidate[
+
+                        "experience_score"
+
+                    ],
+
+
+
+                "Education":
+
+                    candidate[
+
+                        "education_score"
+
+                    ],
+
+
+
+                "Final Score":
+
+                    candidate[
+
+                        "final_candidate_score"
+
+                    ]
+
+            }
+
+
+
+            score_df = pd.DataFrame({
+
+
+
+                "Metric":
+
+                    list(score_data.keys()),
+
+
+
+                "Score":
+
+                    list(score_data.values())
+
+
+
+            })
+
 
 
             st.dataframe(
-                detailed_scores,
+
+                score_df,
+
                 use_container_width=True,
+
                 hide_index=True
+
             )
 
 
-            # ------------------------------------------------
+
+
+
+            # =================================================
+
             # SKILLS
-            # ------------------------------------------------
 
-            skill_col1, skill_col2 = st.columns(2)
+            # =================================================
 
 
-            with skill_col1:
 
-                st.markdown(
-                    "### ✅ Matched Skills"
+            skills_col1, skills_col2 = st.columns(2)
+
+
+
+            with skills_col1:
+
+
+
+                st.subheader(
+
+                    "✅ Matched Skills"
+
                 )
 
 
-                matched = candidate.get(
-                    "matched_skills",
-                    []
+
+                matched = (
+
+                    candidate.get(
+
+                        "matched_required_skills"
+
+                    )
+
+                    or candidate.get(
+
+                        "matched_skills"
+
+                    )
+
+                    or []
+
                 )
+
 
 
                 if matched:
 
+
+
                     for skill in matched:
 
-                        st.success(
-                            str(skill)
+
+
+                        st.write(
+
+                            f"• {skill}"
+
                         )
+
+
 
                 else:
 
-                    st.info(
-                        "No matched skills available."
+
+
+                    st.write(
+
+                        "No matched skills found."
+
                     )
 
 
-            with skill_col2:
 
-                st.markdown(
-                    "### ❌ Missing Skills"
+
+
+            with skills_col2:
+
+
+
+                st.subheader(
+
+                    "❌ Missing Skills"
+
                 )
 
 
-                missing = candidate.get(
-                    "missing_skills",
-                    []
+
+                missing = (
+
+                    candidate.get(
+
+                        "missing_required_skills"
+
+                    )
+
+                    or candidate.get(
+
+                        "missing_skills"
+
+                    )
+
+                    or []
+
                 )
+
 
 
                 if missing:
 
+
+
                     for skill in missing:
 
-                        st.warning(
-                            str(skill)
+
+
+                        st.write(
+
+                            f"• {skill}"
+
                         )
+
+
 
                 else:
 
-                    st.success(
+
+
+                    st.write(
+
                         "No missing skills."
+
                     )
 
 
-            # ------------------------------------------------
-            # EVIDENCE
-            # ------------------------------------------------
 
-            st.markdown(
-                "### 🔎 Evidence Analysis"
+
+
+            # =================================================
+
+            # AI EVALUATION
+
+            # =================================================
+
+
+
+            st.subheader(
+
+                "🤖 AI Evaluation"
+
             )
 
 
-            evidence = candidate.get(
-                "evidence",
-                []
+
+            evaluation = candidate.get(
+
+                "evaluation_json"
+
             )
 
 
-            if evidence:
 
-                st.json(
-                    evidence
+            if evaluation:
+
+
+
+                # -------------------------------------------------
+
+                # Candidate information
+
+                # -------------------------------------------------
+
+
+
+                candidate_name = evaluation.get(
+
+                    "name",
+
+                    candidate.get(
+
+                        "name",
+
+                        "Unknown"
+
+                    )
+
                 )
+
+
+
+                candidate_email = evaluation.get(
+
+                    "email",
+
+                    candidate.get(
+
+                        "email",
+
+                        ""
+
+                    )
+
+                )
+
+
+
+                candidate_phone = evaluation.get(
+
+                    "phone",
+
+                    ""
+
+                )
+
+
+
+                candidate_location = evaluation.get(
+
+                    "location",
+
+                    ""
+
+                )
+
+
+
+
+
+                # -------------------------------------------------
+
+                # PROFESSIONAL LINKS
+
+                # -------------------------------------------------
+
+
+
+                resume_links = extract_resume_links(
+
+                    evaluation
+
+                )
+
+
+
+                if resume_links:
+
+
+
+                    st.markdown(
+
+                        "#### 🔗 Professional Links"
+
+                    )
+
+
+
+                    link_columns = st.columns(
+
+                        len(resume_links)
+
+                    )
+
+
+
+                    for column, (
+
+                        label,
+
+                        url
+
+                    ) in zip(
+
+                        link_columns,
+
+                        resume_links.items()
+
+                    ):
+
+
+
+                        with column:
+
+
+
+                            if label == "LinkedIn":
+
+
+
+                                icon = "🔗"
+
+
+
+                            elif label == "GitHub":
+
+
+
+                                icon = "💻"
+
+
+
+                            else:
+
+
+
+                                icon = "🌐"
+
+
+
+                            st.link_button(
+
+                                f"{icon} Open {label}",
+
+                                url,
+
+                                use_container_width=True
+
+                            )
+
+
+
+
+
+                # -------------------------------------------------
+
+                # CANDIDATE PROFILE
+
+                # -------------------------------------------------
+
+
+
+                st.markdown(
+
+                    "#### 👤 Candidate Profile"
+
+                )
+
+
+
+                profile_col1, profile_col2, profile_col3 = st.columns(3)
+
+
+
+                with profile_col1:
+
+
+
+                    st.write(
+
+                        "**Name**"
+
+                    )
+
+
+
+                    st.write(
+
+                        candidate_name
+
+                    )
+
+
+
+                with profile_col2:
+
+
+
+                    st.write(
+
+                        "**Email**"
+
+                    )
+
+
+
+                    if candidate_email:
+
+
+
+                        st.markdown(
+
+                            f"[{candidate_email}]"
+
+                            f"(mailto:{candidate_email})"
+
+                        )
+
+
+
+                    else:
+
+
+
+                        st.write(
+
+                            "Not available"
+
+                        )
+
+
+
+                with profile_col3:
+
+
+
+                    st.write(
+
+                        "**Phone**"
+
+                    )
+
+
+
+                    if candidate_phone:
+
+
+
+                        st.markdown(
+
+                            f"[{candidate_phone}]"
+
+                            f"(tel:{candidate_phone})"
+
+                        )
+
+
+
+                    else:
+
+
+
+                        st.write(
+
+                            "Not available"
+
+                        )
+
+
+
+                if candidate_location:
+
+
+
+                    st.write(
+
+                        f"📍 **Location:** "
+
+                        f"{candidate_location}"
+
+                    )
+
+
+
+
+
+                # -------------------------------------------------
+
+                # AI MATCH SUMMARY
+
+                # -------------------------------------------------
+
+
+
+                st.markdown(
+
+                    "#### 🎯 AI Match Summary"
+
+                )
+
+
+
+                summary_col1, summary_col2, summary_col3 = st.columns(3)
+
+
+
+                final_score = float(
+
+                    evaluation.get(
+
+                        "final_score",
+
+                        candidate.get(
+
+                            "final_candidate_score",
+
+                            0
+
+                        )
+
+                    ) or 0
+
+                )
+
+
+
+                required_score = float(
+
+                    evaluation.get(
+
+                        "required_skill_score",
+
+                        candidate.get(
+
+                            "required_skill_score",
+
+                            0
+
+                        )
+
+                    ) or 0
+
+                )
+
+
+
+                hybrid_score = float(
+
+                    evaluation.get(
+
+                        "hybrid_skill_score",
+
+                        candidate.get(
+
+                            "hybrid_skill_score",
+
+                            0
+
+                        )
+
+                    ) or 0
+
+                )
+
+
+
+                with summary_col1:
+
+
+
+                    st.metric(
+
+                        "🎯 Final Match",
+
+                        f"{final_score:.2f}%"
+
+                    )
+
+
+
+                with summary_col2:
+
+
+
+                    st.metric(
+
+                        "🧠 Required Skills",
+
+                        f"{required_score:.2f}%"
+
+                    )
+
+
+
+                with summary_col3:
+
+
+
+                    st.metric(
+
+                        "🔍 Verified Skills",
+
+                        f"{hybrid_score:.2f}%"
+
+                    )
+
+
+
+
+
+                # -------------------------------------------------
+
+                # REQUIRED SKILL ANALYSIS
+
+                # -------------------------------------------------
+
+
+
+                st.markdown(
+
+                    "#### 🛠️ Required Skill Analysis"
+
+                )
+
+
+
+                required_skills = safe_json(
+
+                    evaluation.get(
+
+                        "required_skills"
+
+                    ),
+
+                    []
+
+                )
+
+
+
+                matched_skills = safe_json(
+
+                    evaluation.get(
+
+                        "matched_required"
+
+                    )
+
+                    or evaluation.get(
+
+                        "matched_skills"
+
+                    ),
+
+                    []
+
+                )
+
+
+
+                missing_skills = safe_json(
+
+                    evaluation.get(
+
+                        "missing_skills"
+
+                    ),
+
+                    []
+
+                )
+
+
+
+                skill_rows = []
+
+
+
+                for skill in required_skills:
+
+
+
+                    normalized_skill = normalize_skill(
+
+                        skill
+
+                    )
+
+
+
+                    matched = any(
+
+
+
+                        normalize_skill(
+
+                            matched_skill
+
+                        ) == normalized_skill
+
+
+
+                        for matched_skill
+
+                        in matched_skills
+
+
+
+                    )
+
+
+
+                    missing = any(
+
+
+
+                        normalize_skill(
+
+                            missing_skill
+
+                        ) == normalized_skill
+
+
+
+                        for missing_skill
+
+                        in missing_skills
+
+
+
+                    )
+
+
+
+                    if matched:
+
+
+
+                        status = "✅ Matched"
+
+
+
+                        explanation = (
+
+                            "Skill found in candidate resume"
+
+                        )
+
+
+
+                    elif missing:
+
+
+
+                        status = "❌ Missing"
+
+
+
+                        explanation = (
+
+                            "Required skill was not found"
+
+                        )
+
+
+
+                    else:
+
+
+
+                        status = "⚠️ Unverified"
+
+
+
+                        explanation = (
+
+                            "Skill could not be confidently verified"
+
+                        )
+
+
+
+                    skill_rows.append({
+
+
+
+                        "Required Skill":
+
+                            skill,
+
+
+
+                        "Status":
+
+                            status,
+
+
+
+                        "AI Assessment":
+
+                            explanation
+
+
+
+                    })
+
+
+
+                if skill_rows:
+
+
+
+                    skill_df = pd.DataFrame(
+
+                        skill_rows
+
+                    )
+
+
+
+                    st.dataframe(
+
+                        skill_df,
+
+                        use_container_width=True,
+
+                        hide_index=True
+
+                    )
+
+
+
+                else:
+
+
+
+                    st.info(
+
+                        "No required skill analysis available."
+
+                    )
+
+
+
+
+
+                # -------------------------------------------------
+
+                # MATCHED / MISSING SKILLS
+
+                # -------------------------------------------------
+
+
+
+                skill_col1, skill_col2 = st.columns(2)
+
+
+
+                with skill_col1:
+
+
+
+                    st.markdown(
+
+                        "##### ✅ Matched Skills"
+
+                    )
+
+
+
+                    if matched_skills:
+
+
+
+                        for skill in matched_skills:
+
+
+
+                            st.success(
+
+                                str(skill)
+
+                            )
+
+
+
+                    else:
+
+
+
+                        st.info(
+
+                            "No matched skills."
+
+                        )
+
+
+
+
+
+                with skill_col2:
+
+
+
+                    st.markdown(
+
+                        "##### ❌ Missing Skills"
+
+                    )
+
+
+
+                    if missing_skills:
+
+
+
+                        for skill in missing_skills:
+
+
+
+                            st.error(
+
+                                str(skill)
+
+                            )
+
+
+
+                    else:
+
+
+
+                        st.success(
+
+                            "No missing required skills."
+
+                        )
+
+
+
+
+
+                # -------------------------------------------------
+
+                # EXPERIENCE & EDUCATION
+
+                # -------------------------------------------------
+
+
+
+                st.markdown(
+
+                    "#### 🎓 Experience & Education"
+
+                )
+
+
+
+                exp_col1, exp_col2, exp_col3 = st.columns(3)
+
+
+
+                experience = evaluation.get(
+
+                    "experience",
+
+                    0
+
+                )
+
+
+
+                experience_score = float(
+
+                    evaluation.get(
+
+                        "experience_score",
+
+                        candidate.get(
+
+                            "experience_score",
+
+                            0
+
+                        )
+
+                    ) or 0
+
+                )
+
+
+
+                education_score = float(
+
+                    evaluation.get(
+
+                        "education_score",
+
+                        candidate.get(
+
+                            "education_score",
+
+                            0
+
+                        )
+
+                    ) or 0
+
+                )
+
+
+
+                with exp_col1:
+
+
+
+                    st.metric(
+
+                        "Experience",
+
+                        f"{experience} years"
+
+                    )
+
+
+
+                with exp_col2:
+
+
+
+                    st.metric(
+
+                        "Experience Score",
+
+                        f"{experience_score:.1f}%"
+
+                    )
+
+
+
+                with exp_col3:
+
+
+
+                    st.metric(
+
+                        "Education Score",
+
+                        f"{education_score:.1f}%"
+
+                    )
+
+
+
+
+
+                # -------------------------------------------------
+
+                # AI VERIFIED EVIDENCE
+
+                # -------------------------------------------------
+
+
+
+                st.markdown(
+
+                    "#### 🔎 AI Verified Evidence"
+
+                )
+
+
+
+                evidence = safe_json(
+
+                    evaluation.get(
+
+                        "evidence"
+
+                    ),
+
+                    []
+
+                )
+
+
+
+                if isinstance(
+
+                    evidence,
+
+                    dict
+
+                ):
+
+
+
+                    evidence = list(
+
+                        evidence.values()
+
+                    )
+
+
+
+                if evidence:
+
+
+
+                    for item in evidence:
+
+
+
+                        if not isinstance(
+
+                            item,
+
+                            dict
+
+                        ):
+
+                            continue
+
+
+
+                        skill = item.get(
+
+                            "skill",
+
+                            "Unknown Skill"
+
+                        )
+
+
+
+                        verified = item.get(
+
+                            "verified",
+
+                            False
+
+                        )
+
+
+
+                        evidence_data = (
+
+                            item.get(
+
+                                "evidence"
+
+                            ) or {}
+
+                        )
+
+
+
+                        section = evidence_data.get(
+
+                            "section",
+
+                            "Resume"
+
+                        )
+
+
+
+                        confidence = float(
+
+                            evidence_data.get(
+
+                                "score",
+
+                                0
+
+                            ) or 0
+
+                        )
+
+
+
+                        evidence_text = (
+
+                            evidence_data.get(
+
+                                "text",
+
+                                ""
+
+                            )
+
+                        )
+
+
+
+                        if verified:
+
+
+
+                            status = "✅ Verified"
+
+
+
+                        else:
+
+
+
+                            status = "❌ Not Verified"
+
+
+
+                        with st.expander(
+
+                            f"{status} — {skill} "
+
+                            f"(Confidence: "
+
+                            f"{confidence:.2f}%)"
+
+                        ):
+
+
+
+                            st.write(
+
+                                f"**Resume Section:** "
+
+                                f"{section}"
+
+                            )
+
+
+
+                            if evidence_text:
+
+
+
+                                st.write(
+
+                                    "**Supporting Evidence:**"
+
+                                )
+
+
+
+                                st.info(
+
+                                    evidence_text
+
+                                )
+
+
+
+                            else:
+
+
+
+                                st.write(
+
+                                    "No supporting evidence found."
+
+                                )
+
+
+
+                else:
+
+
+
+                    st.info(
+
+                        "No detailed evidence available."
+
+                    )
+
+
+
+
+
+                # -------------------------------------------------
+
+                # DETAILED AI SCORES
+
+                # -------------------------------------------------
+
+
+
+                st.markdown(
+
+                    "#### 📊 Detailed AI Scores"
+
+                )
+
+
+
+                detailed_scores = {
+
+
+
+                    "Required Skill Score":
+
+                        evaluation.get(
+
+                            "required_skill_score",
+
+                            candidate.get(
+
+                                "required_skill_score",
+
+                                0
+
+                            )
+
+                        ),
+
+
+
+                    "Preferred Skill Score":
+
+                        evaluation.get(
+
+                            "preferred_skill_score",
+
+                            candidate.get(
+
+                                "preferred_skill_score",
+
+                                0
+
+                            )
+
+                        ),
+
+
+
+                    "Overall Skill Score":
+
+                        evaluation.get(
+
+                            "overall_skill_score",
+
+                            candidate.get(
+
+                                "overall_skill_score",
+
+                                0
+
+                            )
+
+                        ),
+
+
+
+                    "Keyword Score":
+
+                        evaluation.get(
+
+                            "keyword_skill_score",
+
+                            evaluation.get(
+
+                                "keyword_score",
+
+                                candidate.get(
+
+                                    "keyword_score",
+
+                                    0
+
+                                )
+
+                            )
+
+                        ),
+
+
+
+                    "Semantic Evidence":
+
+                        evaluation.get(
+
+                            "semantic_evidence_score",
+
+                            candidate.get(
+
+                                "evidence_score",
+
+                                0
+
+                            )
+
+                        ),
+
+
+
+                    "Hybrid Skill Score":
+
+                        evaluation.get(
+
+                            "hybrid_skill_score",
+
+                            candidate.get(
+
+                                "hybrid_skill_score",
+
+                                0
+
+                            )
+
+                        ),
+
+
+
+                    "Experience Score":
+
+                        evaluation.get(
+
+                            "experience_score",
+
+                            candidate.get(
+
+                                "experience_score",
+
+                                0
+
+                            )
+
+                        ),
+
+
+
+                    "Education Score":
+
+                        evaluation.get(
+
+                            "education_score",
+
+                            candidate.get(
+
+                                "education_score",
+
+                                0
+
+                            )
+
+                        ),
+
+
+
+                    "Final Score":
+
+                        evaluation.get(
+
+                            "final_score",
+
+                            candidate.get(
+
+                                "final_candidate_score",
+
+                                0
+
+                            )
+
+                        )
+
+                }
+
+
+
+                score_table = []
+
+
+
+                for metric, value in detailed_scores.items():
+
+
+
+                    try:
+
+
+
+                        numeric_value = float(
+
+                            value or 0
+
+                        )
+
+
+
+                    except Exception:
+
+
+
+                        numeric_value = 0
+
+
+
+                    score_table.append({
+
+
+
+                        "AI Metric":
+
+                            metric,
+
+
+
+                        "Score":
+
+                            f"{numeric_value:.2f}%"
+
+
+
+                    })
+
+
+
+                st.dataframe(
+
+                    pd.DataFrame(
+
+                        score_table
+
+                    ),
+
+                    use_container_width=True,
+
+                    hide_index=True
+
+                )
+
+
+
+
+
+                # -------------------------------------------------
+
+                # RAW JSON - DEVELOPER ONLY
+
+                # -------------------------------------------------
+
+
+
+                with st.expander(
+
+                    "🔧 Developer: View Raw AI Evaluation"
+
+                ):
+
+
+
+                    st.json(
+
+                        evaluation
+
+                    )
+
+
 
             else:
 
+
+
                 st.info(
-                    "No evidence details available."
+
+                    "No detailed AI evaluation available."
+
                 )
+
+
+
+
+
+            # =================================================
+
+            # MANUAL STATUS
+
+            # =================================================
+
+
+
+            st.subheader(
+
+                "Recruiter Decision"
+
+            )
+
+
+
+            status_options = [
+
+                "Shortlisted",
+
+                "Under Review",
+
+                "Not Eligible",
+
+                "Rejected",
+
+                "Interview Scheduled",
+
+                "Selected"
+
+            ]
+
+
+
+            current_status = candidate["status"]
+
+
+
+            if current_status in status_options:
+
+
+
+                current_index = (
+
+                    status_options.index(
+
+                        current_status
+
+                    )
+
+                )
+
+
+
+            else:
+
+
+
+                current_index = 1
+
+
+
+            new_status = st.selectbox(
+
+
+
+                "Update Candidate Status",
+
+
+
+                status_options,
+
+
+
+                index=current_index,
+
+
+
+                key=f"status_select_{candidate['id']}"
+
+
+
+            )
+
+
+
+            if st.button(
+
+                "Save Candidate Status",
+
+                key=f"status_{candidate['id']}"
+
+            ):
+
+
+
+                update_application_status(
+
+                    candidate["id"],
+
+                    new_status
+
+                )
+
+
+
+                st.success(
+
+                    "Candidate status updated."
+
+                )
+
+
+
+                st.rerun()
+
+
+
+
+
+            # =================================================
+
+            # INTERVIEW SCHEDULING
+
+            # =================================================
+
+
+
+            st.divider()
+
+
+
+            st.subheader(
+
+                "📅 Interview Scheduling"
+
+            )
+
+
+
+            with st.form(
+
+                f"schedule_interview_{candidate['id']}"
+
+            ):
+
+
+
+                interview_date = st.date_input(
+
+                    "Interview Date",
+
+                    value=date.today(),
+
+                    min_value=date.today()
+
+                )
+
+
+
+                interview_time = st.time_input(
+
+                    "Interview Time",
+
+                    value=time(10, 0)
+
+                )
+
+
+
+                interview_type = st.selectbox(
+
+                    "Interview Type",
+
+                    [
+
+                        "Technical",
+
+                        "HR",
+
+                        "Managerial",
+
+                        "Technical + HR"
+
+                    ]
+
+                )
+
+
+
+                interviewer = st.text_input(
+
+                    "Interviewer Name",
+
+                    placeholder="Enter interviewer name"
+
+                )
+
+
+
+                meeting_link = st.text_input(
+
+                    "Meeting Link",
+
+                    placeholder=(
+
+                        "https://meet.google.com/..."
+
+                    )
+
+                )
+
+
+
+                notes = st.text_area(
+
+                    "Interview Notes",
+
+                    placeholder=(
+
+                        "Additional instructions "
+
+                        "or interview notes..."
+
+                    )
+
+                )
+
+
+
+                schedule_button = st.form_submit_button(
+
+                    "📅 Schedule Interview",
+
+                    type="primary"
+
+                )
+
+
+
+                if schedule_button:
+
+
+
+                    if not interviewer.strip():
+
+
+
+                        st.error(
+
+                            "Please enter the interviewer name."
+
+                        )
+
+
+
+                    else:
+
+
+
+                        interview_id = create_interview(
+
+
+
+                            application_id=
+
+                                candidate["id"],
+
+
+
+                            interview_date=
+
+                                str(interview_date),
+
+
+
+                            interview_time=
+
+                                str(interview_time),
+
+
+
+                            interview_type=
+
+                                interview_type,
+
+
+
+                            interviewer=
+
+                                interviewer.strip(),
+
+
+
+                            meeting_link=
+
+                                meeting_link.strip(),
+
+
+
+                            notes=
+
+                                notes.strip()
+
+                        )
+
+
+
+                        update_application_status(
+
+                            candidate["id"],
+
+                            "Interview Scheduled"
+
+                        )
+
+
+
+                        st.success(
+
+                            "Interview scheduled successfully!"
+
+                        )
+
+
+
+                        st.info(
+
+                            f"Interview ID: {interview_id}"
+
+                        )
+
+
+
+                        st.rerun()
+
+
+
+
+
+            # =================================================
+
+            # EXISTING INTERVIEWS
+
+            # =================================================
+
+
+
+            st.subheader(
+
+                "📋 Scheduled Interviews"
+
+            )
+
+
+
+            interviews = get_interviews_for_application(
+
+                candidate["id"]
+
+            )
+
+
+
+            if not interviews:
+
+
+
+                st.info(
+
+                    "No interview scheduled for this candidate."
+
+                )
+
+
+
+            else:
+
+
+
+                for interview in interviews:
+
+
+
+                    with st.container():
+
+
+
+                        st.markdown(
+
+                            f"""
+
+                            ### {interview['interview_type']} Interview
+
+
+
+                            **Date:** {interview['interview_date']}
+
+
+
+                            **Time:** {interview['interview_time']}
+
+
+
+                            **Interviewer:** {interview['interviewer']}
+
+
+
+                            **Status:** {interview['status']}
+
+                            """
+
+                        )
+
+
+
+                        if interview[
+
+                            "meeting_link"
+
+                        ]:
+
+
+
+                            meeting_url = (
+
+                                interview[
+
+                                    "meeting_link"
+
+                                ]
+
+                            )
+
+
+
+                            if not meeting_url.startswith(
+
+                                (
+
+                                    "http://",
+
+                                    "https://"
+
+                                )
+
+                            ):
+
+
+
+                                meeting_url = (
+
+                                    "https://"
+
+                                    + meeting_url
+
+                                )
+
+
+
+                            st.link_button(
+
+                                "🔗 Join Interview",
+
+                                meeting_url
+
+                            )
+
+
+
+                        if interview["notes"]:
+
+
+
+                            st.write(
+
+                                f"**Notes:** "
+
+                                f"{interview['notes']}"
+
+                            )
+
+
+
+                        st.divider()
+
+
+
+
+
+# ============================================================
+
+# CANDIDATE COMPARISON
+
+# ============================================================
+
+
+
+elif page == "Candidate Comparison":
+
+
+
+    st.header(
+
+        "📊 Candidate Comparison"
+
+    )
+
+
+
+    jobs = get_jobs()
+
+
+
+    if not jobs:
+
+
+
+        st.info(
+
+            "Create a job first."
+
+        )
+
+
+
+        st.stop()
+
+
+
+    job_options = {
+
+
+
+        f"{job['title']} "
+
+        f"(ID: {job['id']})":
+
+        job["id"]
+
+
+
+        for job in jobs
+
+
+
+    }
+
+
+
+    selected_job_label = st.selectbox(
+
+        "Select Job",
+
+        list(job_options.keys())
+
+    )
+
+
+
+    selected_job_id = job_options[
+
+        selected_job_label
+
+    ]
+
+
+
+    applications = get_applications_for_job(
+
+        selected_job_id
+
+    )
+
+
+
+    if not applications:
+
+
+
+        st.info(
+
+            "No candidates available for comparison."
+
+        )
+
+
+
+        st.stop()
+
+
+
+    candidate_options = {
+
+
+
+        f"{candidate['name']} "
+
+        f"(Application #{candidate['application_id']})":
+
+        candidate["application_id"]
+
+
+
+        for candidate in applications
+
+
+
+    }
+
+
+
+    selected_labels = st.multiselect(
+
+        "Select 2–4 Candidates",
+
+        list(candidate_options.keys()),
+
+        max_selections=4
+
+    )
+
+
+
+    if len(selected_labels) < 2:
+
+
+
+        st.info(
+
+            "Select at least 2 candidates."
+
+        )
+
+
+
+    else:
+
+
+
+        selected_ids = [
+
+
+
+            candidate_options[label]
+
+
+
+            for label in selected_labels
+
+
+
+        ]
+
+
+
+        selected_candidates = [
+
+
+
+            get_application(application_id)
+
+
+
+            for application_id
+
+            in selected_ids
+
+
+
+        ]
+
+
+
+        st.subheader(
+
+            "Candidate Comparison"
+
+        )
+
+
+
+        comparison = {}
+
+
+
+        for candidate in selected_candidates:
+
+
+
+            label = (
+
+                f"{candidate['name']} "
+
+                f"(#{candidate['id']})"
+
+            )
+
+
+
+            comparison[label] = {
+
+
+
+                "Overall Score":
+
+                    candidate[
+
+                        "final_candidate_score"
+
+                    ],
+
+
+
+                "Required Skills":
+
+                    candidate[
+
+                        "required_skill_score"
+
+                    ],
+
+
+
+                "Preferred Skills":
+
+                    candidate[
+
+                        "preferred_skill_score"
+
+                    ],
+
+
+
+                "Experience":
+
+                    candidate[
+
+                        "experience_score"
+
+                    ],
+
+
+
+                "Education":
+
+                    candidate[
+
+                        "education_score"
+
+                    ],
+
+
+
+                "Evidence":
+
+                    candidate[
+
+                        "evidence_score"
+
+                    ]
+
+            }
+
+
+
+        comparison_df = pd.DataFrame(
+
+            comparison
+
+        )
+
+
+
+        st.dataframe(
+
+            comparison_df,
+
+            use_container_width=True
+
+        )
+
+
+
+
+
+        # ====================================================
+
+        # SCORE COMPARISON
+
+        # ====================================================
+
+
+
+        st.subheader(
+
+            "Score Comparison"
+
+        )
+
+
+
+        chart_data = pd.DataFrame({
+
+
+
+            candidate["name"]: {
+
+
+
+                "Overall Score":
+
+                    float(
+
+                        candidate[
+
+                            "final_candidate_score"
+
+                        ] or 0
+
+                    ),
+
+
+
+                "Required Skills":
+
+                    float(
+
+                        candidate[
+
+                            "required_skill_score"
+
+                        ] or 0
+
+                    ),
+
+
+
+                "Experience":
+
+                    float(
+
+                        candidate[
+
+                            "experience_score"
+
+                        ] or 0
+
+                    ),
+
+
+
+                "Education":
+
+                    float(
+
+                        candidate[
+
+                            "education_score"
+
+                        ] or 0
+
+                    ),
+
+
+
+                "Evidence":
+
+                    float(
+
+                        candidate[
+
+                            "evidence_score"
+
+                        ] or 0
+
+                    )
+
+
+
+            }
+
+
+
+            for candidate in selected_candidates
+
+
+
+        })
+
+
+
+        st.bar_chart(
+
+            chart_data
+
+        )
+
+
+
+
+
+        # ====================================================
+
+        # CANDIDATE SKILLS
+
+        # ====================================================
+
+
+
+        st.subheader(
+
+            "Candidate Skills"
+
+        )
+
+
+
+        for candidate in selected_candidates:
+
+
+
+            st.markdown(
+
+                f"### {candidate['name']}"
+
+            )
+
+
+
+            matched = (
+
+                candidate.get(
+
+                    "matched_required_skills"
+
+                )
+
+                or candidate.get(
+
+                    "matched_skills"
+
+                )
+
+                or []
+
+            )
+
+
+
+            missing = (
+
+                candidate.get(
+
+                    "missing_required_skills"
+
+                )
+
+                or candidate.get(
+
+                    "missing_skills"
+
+                )
+
+                or []
+
+            )
+
+
+
+            col1, col2 = st.columns(2)
+
+
+
+            with col1:
+
+
+
+                st.write(
+
+                    "**Matched Skills**"
+
+                )
+
+
+
+                for skill in matched:
+
+
+
+                    st.write(
+
+                        f"✅ {skill}"
+
+                    )
+
+
+
+            with col2:
+
+
+
+                st.write(
+
+                    "**Missing Skills**"
+
+                )
+
+
+
+                for skill in missing:
+
+
+
+                    st.write(
+
+                        f"❌ {skill}"
+
+                    )
+
+
+
+            st.divider()

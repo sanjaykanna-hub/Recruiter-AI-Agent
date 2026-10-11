@@ -1,875 +1,1541 @@
-import os
-import sys
-import tempfile
-
 import streamlit as st
-
-
-# ============================================================
-# PATH
-# ============================================================
-
-PROJECT_ROOT = os.path.dirname(
-    os.path.abspath(__file__)
-)
-
-BACKEND_DIR = os.path.join(
-    PROJECT_ROOT,
-    "backend"
-)
-
-
-if PROJECT_ROOT not in sys.path:
-
-    sys.path.insert(
-        0,
-        PROJECT_ROOT
-    )
-
-
-if BACKEND_DIR not in sys.path:
-
-    sys.path.insert(
-        0,
-        BACKEND_DIR
-    )
-
-
-# ============================================================
-# BACKEND
-# ============================================================
+import os
+import json
+from datetime import datetime
 
 from backend.database import (
     init_database,
+    create_candidate_account,
+    authenticate_candidate,
+    get_candidate,
+    update_candidate_resume,
     get_jobs,
-    get_job,
-    create_candidate,
     create_application,
-    save_evaluation
+    get_candidate_applications,
+    get_candidate_notifications,
+    mark_notification_read,
+    save_feedback,
+    get_interviews_for_application,
+    save_evaluation,
 )
 
-
-from backend.recruitment_agent import (
-    screen_candidate_with_agent
-)
-
-
-init_database()
+from backend.candidate_evaluator import evaluate_candidate
 
 
 # ============================================================
-# PAGE
+# CONFIGURATION
 # ============================================================
 
 st.set_page_config(
-
     page_title="Recruiter AI - Candidate Portal",
-
-    page_icon="🤖",
-
-    layout="centered"
+    page_icon="💼",
+    layout="wide"
 )
 
+init_database()
 
-st.title(
-    "🤖 Recruiter AI"
-)
-
-st.subheader(
-    "Candidate Application Portal"
-)
-
-st.write(
-    "Select a position and upload your resume. "
-    "The Recruitment AI Agent will automatically "
-    "screen your application."
-)
+RESUME_DIR = os.path.join("data", "resumes")
+os.makedirs(RESUME_DIR, exist_ok=True)
 
 
 # ============================================================
-# JOBS
+# SESSION STATE
 # ============================================================
 
-jobs = get_jobs(
-    active_only=True
-)
+if "candidate_logged_in" not in st.session_state:
+    st.session_state.candidate_logged_in = False
 
+if "candidate_user" not in st.session_state:
+    st.session_state.candidate_user = None
 
-if not jobs:
-
-    st.warning(
-        "No active jobs are currently available."
-    )
-
-    st.stop()
-
-
-job_options = {
-
-    f"{job['title']} — Job #{job['job_id']}":
-    job["job_id"]
-
-    for job in jobs
-}
-
-
-selected_job_label = st.selectbox(
-
-    "Select Position",
-
-    list(
-        job_options.keys()
-    )
-)
-
-
-selected_job_id = job_options[
-    selected_job_label
-]
-
-
-job = get_job(
-    selected_job_id
-)
+if "candidate_page" not in st.session_state:
+    st.session_state.candidate_page = "Dashboard"
 
 
 # ============================================================
-# JOB DESCRIPTION
+# HELPER FUNCTIONS
 # ============================================================
 
-with st.expander(
-    "View Job Description",
-    expanded=True
-):
+def safe_json(value):
+    if value is None:
+        return {}
 
-    st.write(
-        job["description"]
-    )
+    if isinstance(value, (dict, list)):
+        return value
 
-
-# ============================================================
-# SCREENING INFORMATION
-# ============================================================
-
-with st.expander(
-    "View General Screening Requirements"
-):
-
-    minimum_score = float(
-        job.get(
-            "minimum_score",
-            70
-        )
-    )
+    try:
+        return json.loads(value)
+    except Exception:
+        return {}
 
 
-    st.write(
-        f"Minimum screening score: "
-        f"**{minimum_score:.0f}%**"
-    )
-
-
-    required_skills = job.get(
-        "required_skills",
-        []
-    )
-
-
-    if required_skills:
-
-        st.write(
-            "**Required skills:** "
-            + ", ".join(
-                required_skills
-            )
-        )
-
-
-# ============================================================
-# CANDIDATE DETAILS
-# ============================================================
-
-st.divider()
-
-st.header(
-    "Candidate Details"
-)
-
-
-candidate_name = st.text_input(
-    "Full Name"
-)
-
-
-candidate_email = st.text_input(
-    "Email Address"
-)
-
-
-# ============================================================
-# RESUME
-# ============================================================
-
-uploaded_resume = st.file_uploader(
-
-    "Upload Resume",
-
-    type=[
-        "pdf"
-    ]
-)
-
-
-# ============================================================
-# HELPERS
-# ============================================================
-
-def get_score(
-    result
-):
-
-    if not isinstance(
-        result,
-        dict
-    ):
-
-        return 0.0
-
-
-    for key in [
-
-        "final_candidate_score",
-
-        "final_score",
-
-        "score"
-    ]:
-
-        if key in result:
-
-            try:
-
-                return float(
-                    result[key]
-                )
-
-            except Exception:
-
-                pass
-
-
-    return 0.0
-
-
-def get_list(
-    result,
-    keys
-):
-
-    if not isinstance(
-        result,
-        dict
-    ):
-
+def normalize_skill_list(value):
+    if not value:
         return []
 
+    if isinstance(value, list):
+        return value
 
-    for key in keys:
+    if isinstance(value, str):
 
-        if key not in result:
+        parsed = safe_json(value)
 
-            continue
+        if isinstance(parsed, list):
+            return parsed
 
-
-        value = result[key]
-
-
-        if isinstance(
-            value,
-            list
-        ):
-
-            return value
-
-
-        if isinstance(
-            value,
-            str
-        ):
-
-            if value.strip():
-
-                return [
-                    value
-                ]
-
+        return [
+            item.strip()
+            for item in value.split(",")
+            if item.strip()
+        ]
 
     return []
 
 
-def normalize_skill(
-    skill
-):
+def get_application_score(application):
+    score = application.get("final_score")
 
-    return str(
-        skill
-    ).strip().lower()
+    if score is None:
+        score = application.get("overall_score", 0)
+
+    try:
+        return float(score or 0)
+    except Exception:
+        return 0.0
 
 
-def determine_status(
-    result,
-    job
-):
+# ============================================================
+# AI IMPROVEMENT SUGGESTIONS
+# ============================================================
 
-    score = get_score(
-        result
+def generate_improvement_suggestions(application):
+
+    suggestions = []
+
+    matched_skills = normalize_skill_list(
+        application.get("matched_skills")
     )
 
-
-    required_skills = job.get(
-        "required_skills",
-        []
+    missing_skills = normalize_skill_list(
+        application.get("missing_skills")
     )
 
-
-    matched_skills = get_list(
-
-        result,
-
-        [
-            "matched_required_skills",
-
-            "matched_skills"
-        ]
+    required_score = float(
+        application.get("required_skill_score") or 0
     )
 
-
-    missing_required_from_result = get_list(
-
-        result,
-
-        [
-            "missing_required_skills",
-
-            "missing_required"
-        ]
+    experience_score = float(
+        application.get("experience_score") or 0
     )
 
+    education_score = float(
+        application.get("education_score") or 0
+    )
 
-    # --------------------------------------------------------
-    # If the evaluation pipeline explicitly identifies
-    # missing required skills, use that information.
-    # --------------------------------------------------------
+    # Missing skills
+    if missing_skills:
 
-    if missing_required_from_result:
+        suggestions.append({
+            "priority": "High",
+            "title": "Improve missing skills",
+            "message": (
+                "The following skills were not detected strongly "
+                "enough in your resume: "
+                + ", ".join(map(str, missing_skills))
+                + "."
+            )
+        })
 
-        return (
-            "Not Eligible",
-            missing_required_from_result
-        )
+    # Required skills
+    if required_score < 70:
+
+        suggestions.append({
+            "priority": "High",
+            "title": "Increase your required skill match",
+            "message": (
+                "Your required-skill score is below 70%. "
+                "Add relevant projects, internships, certifications "
+                "or practical experience that demonstrate the required skills."
+            )
+        })
+
+    # Experience
+    if experience_score < 60:
+
+        suggestions.append({
+            "priority": "Medium",
+            "title": "Strengthen your experience section",
+            "message": (
+                "Add internships, academic projects, freelance work "
+                "or professional experience. Explain your role, "
+                "technologies used and the result of your work."
+            )
+        })
+
+    # Education
+    if education_score < 60:
+
+        suggestions.append({
+            "priority": "Medium",
+            "title": "Improve education details",
+            "message": (
+                "Clearly mention your degree, specialization, "
+                "university and graduation details."
+            )
+        })
+
+    # Evidence
+    if not matched_skills:
+
+        suggestions.append({
+            "priority": "Medium",
+            "title": "Add stronger skill evidence",
+            "message": (
+                "Instead of only listing skills, provide projects "
+                "or experience that demonstrate how you used them."
+            )
+        })
+
+    # Good profile
+    if not suggestions:
+
+        suggestions.append({
+            "priority": "Low",
+            "title": "Keep improving",
+            "message": (
+                "Your profile currently has a good match. "
+                "Continue adding projects, certifications and "
+                "measurable achievements."
+            )
+        })
+
+    return suggestions
 
 
-    # --------------------------------------------------------
-    # Recruiter-defined required skills.
-    #
-    # This is a conservative matching check. We only mark a
-    # skill as missing when the evaluation result has enough
-    # information to identify it.
-    # --------------------------------------------------------
+# ============================================================
+# JOB RECOMMENDATIONS
+# ============================================================
 
-    matched_normalized = {
+def get_recommended_jobs(candidate_id):
 
-        normalize_skill(skill)
+    applications = get_candidate_applications(
+        candidate_id
+    )
 
-        for skill in matched_skills
+    applied_job_ids = {
+        application["job_id"]
+        for application in applications
     }
 
+    jobs = get_jobs(active_only=True)
 
-    missing_recruiter_skills = []
+    candidate_skills = set()
 
+    for application in applications:
 
-    for required_skill in required_skills:
-
-        normalized_required = normalize_skill(
-            required_skill
+        matched = normalize_skill_list(
+            application.get("matched_skills")
         )
 
+        for skill in matched:
 
-        if normalized_required in matched_normalized:
-
-            continue
-
-
-        # Check partial skill-name matching.
-
-        found = False
-
-
-        for matched_skill in matched_normalized:
-
-            if (
-
-                normalized_required in matched_skill
-
-                or
-
-                matched_skill in normalized_required
-            ):
-
-                found = True
-
-                break
-
-
-        if not found:
-
-            missing_recruiter_skills.append(
-                required_skill
+            candidate_skills.add(
+                str(skill).lower().strip()
             )
 
+    recommendations = []
 
-    # --------------------------------------------------------
-    # Required skill failure
-    # --------------------------------------------------------
+    for job in jobs:
 
-    if missing_recruiter_skills:
+        if job["job_id"] in applied_job_ids:
+            continue
 
-        return (
-            "Not Eligible",
-            missing_recruiter_skills
+        required = normalize_skill_list(
+            job.get("required_skills")
         )
 
-
-    # --------------------------------------------------------
-    # Minimum score
-    # --------------------------------------------------------
-
-    if score >= float(
-        job.get(
-            "minimum_score",
-            70
-        )
-    ):
-
-        return (
-            "Shortlisted",
-            []
+        preferred = normalize_skill_list(
+            job.get("preferred_skills")
         )
 
+        all_skills = required + preferred
 
-    return (
-        "Under Review",
-        []
+        if not all_skills:
+            continue
+
+        matches = []
+
+        for skill in all_skills:
+
+            if str(skill).lower().strip() in candidate_skills:
+                matches.append(skill)
+
+        score = (
+            len(matches) / len(all_skills) * 100
+            if all_skills
+            else 0
+        )
+
+        recommendations.append({
+            "job": job,
+            "score": score,
+            "matches": matches
+        })
+
+    recommendations.sort(
+        key=lambda item: item["score"],
+        reverse=True
     )
+
+    return recommendations[:5]
 
 
 # ============================================================
-# SUBMIT
+# FEEDBACK EMAIL
 # ============================================================
 
-st.divider()
+def send_feedback_email(
+    candidate_name,
+    candidate_email,
+    category,
+    message
+):
 
+    api_key = os.getenv("RESEND_API_KEY")
 
-submit = st.button(
+    if not api_key:
 
-    "🚀 Submit Application & Screen Resume",
-
-    type="primary",
-
-    use_container_width=True
-)
-
-
-if submit:
-
-    # --------------------------------------------------------
-    # VALIDATION
-    # --------------------------------------------------------
-
-    if not candidate_name.strip():
-
-        st.error(
-            "Please enter your name."
+        return (
+            False,
+            "Feedback saved. Email service is not configured yet."
         )
-
-        st.stop()
-
-
-    if not candidate_email.strip():
-
-        st.error(
-            "Please enter your email."
-        )
-
-        st.stop()
-
-
-    if uploaded_resume is None:
-
-        st.error(
-            "Please upload your resume."
-        )
-
-        st.stop()
-
-
-    # --------------------------------------------------------
-    # SAVE TEMP RESUME
-    # --------------------------------------------------------
-
-    temp_dir = os.path.join(
-
-        tempfile.gettempdir(),
-
-        "recruiter_ai_agent"
-    )
-
-
-    os.makedirs(
-
-        temp_dir,
-
-        exist_ok=True
-    )
-
-
-    filename = (
-
-        uploaded_resume.name
-
-        .replace(
-            " ",
-            "_"
-        )
-
-        .replace(
-            "/",
-            "_"
-        )
-
-        .replace(
-            "\\",
-            "_"
-        )
-    )
-
-
-    resume_path = os.path.join(
-
-        temp_dir,
-
-        filename
-    )
-
 
     try:
 
-        with open(
+        import requests
 
-            resume_path,
+        payload = {
+            "from": "Recruiter AI <onboarding@resend.dev>",
+            "to": [
+                "sanjay27.8.2006@gmail.com"
+            ],
+            "subject": (
+                f"Recruiter AI Feedback - {category}"
+            ),
+            "html": f"""
+                <h2>Recruiter AI Feedback</h2>
 
-            "wb"
+                <p>
+                    <strong>Candidate:</strong>
+                    {candidate_name}
+                </p>
 
-        ) as file:
+                <p>
+                    <strong>Email:</strong>
+                    {candidate_email}
+                </p>
 
-            file.write(
-                uploaded_resume.getbuffer()
-            )
+                <p>
+                    <strong>Category:</strong>
+                    {category}
+                </p>
 
+                <hr>
 
-    except Exception as error:
+                <p>{message}</p>
+            """
+        }
 
-        st.error(
-            f"Unable to save resume: {error}"
+        response = requests.post(
+            "https://api.resend.com/emails",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json=payload,
+            timeout=15
         )
 
-        st.stop()
+        if response.status_code in [200, 201]:
+
+            return (
+                True,
+                "Feedback sent successfully."
+            )
+
+        return (
+            False,
+            "Feedback was saved, but email delivery failed."
+        )
+
+    except Exception:
+
+        return (
+            False,
+            "Feedback was saved, but email delivery failed."
+        )
 
 
-    # --------------------------------------------------------
-    # AI AGENT
-    # --------------------------------------------------------
+# ============================================================
+# LOGIN / REGISTER
+# ============================================================
+
+def show_login_page():
+
+    st.markdown(
+        """
+        <div style="
+            text-align:center;
+            padding:40px 0 20px 0;
+        ">
+
+            <h1>💼 Recruiter AI</h1>
+
+            <p style="font-size:18px;">
+                Candidate Portal
+            </p>
+
+            <p>
+                Apply for jobs, track your applications
+                and get AI career guidance.
+            </p>
+
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    login_tab, register_tab = st.tabs([
+        "Login",
+        "Create Account"
+    ])
+
+    # ========================================================
+    # LOGIN
+    # ========================================================
+
+    with login_tab:
+
+        st.subheader("Candidate Login")
+
+        email = st.text_input(
+            "Email",
+            key="login_email"
+        )
+
+        password = st.text_input(
+            "Password",
+            type="password",
+            key="login_password"
+        )
+
+        if st.button(
+            "Login",
+            use_container_width=True
+        ):
+
+            if not email or not password:
+
+                st.warning(
+                    "Please enter your email and password."
+                )
+
+            else:
+
+                user = authenticate_candidate(
+                    email,
+                    password
+                )
+
+                if user:
+
+                    st.session_state.candidate_logged_in = True
+
+                    st.session_state.candidate_user = user
+
+                    st.session_state.candidate_page = "Dashboard"
+
+                    st.rerun()
+
+                else:
+
+                    st.error(
+                        "Invalid email or password."
+                    )
+
+    # ========================================================
+    # REGISTER
+    # ========================================================
+
+    with register_tab:
+
+        st.subheader("Create Candidate Account")
+
+        name = st.text_input(
+            "Full Name",
+            key="register_name"
+        )
+
+        email = st.text_input(
+            "Email Address",
+            key="register_email"
+        )
+
+        password = st.text_input(
+            "Password",
+            type="password",
+            key="register_password"
+        )
+
+        confirm_password = st.text_input(
+            "Confirm Password",
+            type="password",
+            key="register_confirm_password"
+        )
+
+        if st.button(
+            "Create Account",
+            use_container_width=True
+        ):
+
+            if not name or not email or not password:
+
+                st.warning(
+                    "Please fill in all fields."
+                )
+
+            elif password != confirm_password:
+
+                st.error(
+                    "Passwords do not match."
+                )
+
+            elif len(password) < 6:
+
+                st.warning(
+                    "Password must contain at least 6 characters."
+                )
+
+            else:
+
+                candidate_id = create_candidate_account(
+                    name,
+                    email,
+                    password
+                )
+
+                if candidate_id:
+
+                    st.success(
+                        "Account created successfully. "
+                        "You can now login."
+                    )
+
+                else:
+
+                    st.error(
+                        "An account with this email already exists."
+                    )
+
+
+# ============================================================
+# SIDEBAR
+# ============================================================
+
+def show_sidebar():
+
+    user = st.session_state.candidate_user
+
+    with st.sidebar:
+
+        st.title("Recruiter AI")
+
+        st.caption(
+            f"Welcome, {user['name']}"
+        )
+
+        st.divider()
+
+        pages = [
+            "Dashboard",
+            "Find Jobs",
+            "My Applications",
+            "Notifications",
+            "AI Improvement",
+            "Feedback"
+        ]
+
+        for page in pages:
+
+            if st.button(
+                page,
+                use_container_width=True
+            ):
+
+                st.session_state.candidate_page = page
+
+                st.rerun()
+
+        st.divider()
+
+        if st.button(
+            "Logout",
+            use_container_width=True
+        ):
+
+            st.session_state.candidate_logged_in = False
+
+            st.session_state.candidate_user = None
+
+            st.session_state.candidate_page = "Dashboard"
+
+            st.rerun()
+
+
+# ============================================================
+# DASHBOARD
+# ============================================================
+
+def show_dashboard():
+
+    user = st.session_state.candidate_user
+
+    candidate_id = user["candidate_id"]
+
+    applications = get_candidate_applications(
+        candidate_id
+    )
+
+    notifications = get_candidate_notifications(
+        candidate_id
+    )
+
+    unread_notifications = [
+        notification
+        for notification in notifications
+        if not notification["is_read"]
+    ]
+
+    st.title("Candidate Dashboard")
+
+    st.write(
+        f"Welcome back, **{user['name']}** 👋"
+    )
+
+    # ========================================================
+    # METRICS
+    # ========================================================
+
+    total_applications = len(applications)
+
+    shortlisted = len([
+        application
+        for application in applications
+        if application["status"].lower() == "shortlisted"
+    ])
+
+    interviews = len([
+        application
+        for application in applications
+        if "interview" in application["status"].lower()
+    ])
+
+    rejected = len([
+        application
+        for application in applications
+        if application["status"].lower() == "rejected"
+    ])
+
+    col1, col2, col3, col4 = st.columns(4)
+
+    col1.metric(
+        "Applications",
+        total_applications
+    )
+
+    col2.metric(
+        "Shortlisted",
+        shortlisted
+    )
+
+    col3.metric(
+        "Interviews",
+        interviews
+    )
+
+    col4.metric(
+        "Rejected",
+        rejected
+    )
+
+    st.divider()
+
+    # ========================================================
+    # LATEST NOTIFICATION
+    # ========================================================
+
+    if unread_notifications:
+
+        st.subheader("🔔 Latest Notification")
+
+        notification = unread_notifications[0]
+
+        st.info(
+            f"**{notification['title']}**\n\n"
+            f"{notification['message']}"
+        )
+
+    # ========================================================
+    # APPLICATIONS
+    # ========================================================
+
+    st.subheader("Recent Applications")
+
+    if not applications:
+
+        st.info(
+            "You haven't applied for any jobs yet."
+        )
+
+        if st.button("Find Jobs"):
+
+            st.session_state.candidate_page = "Find Jobs"
+
+            st.rerun()
+
+        return
+
+    for application in applications[:5]:
+
+        score = get_application_score(
+            application
+        )
+
+        with st.container(border=True):
+
+            col1, col2, col3 = st.columns([
+                2,
+                1,
+                1
+            ])
+
+            with col1:
+
+                st.subheader(
+                    application["job_title"]
+                )
+
+                st.caption(
+                    "Applied: "
+                    + application["created_at"][:10]
+                )
+
+            with col2:
+
+                st.metric(
+                    "AI Match",
+                    f"{score:.1f}%"
+                )
+
+            with col3:
+
+                st.write("**Status**")
+
+                status = application["status"]
+
+                if status.lower() == "shortlisted":
+
+                    st.success(status)
+
+                elif status.lower() == "rejected":
+
+                    st.error(status)
+
+                else:
+
+                    st.info(status)
+
+
+# ============================================================
+# FIND JOBS
+# ============================================================
+
+def show_find_jobs():
+
+    user = st.session_state.candidate_user
+
+    candidate_id = user["candidate_id"]
+
+    st.title("Find Jobs")
+
+    st.write(
+        "Find active jobs and apply using your resume."
+    )
+
+    # ========================================================
+    # RESUME
+    # ========================================================
+
+    candidate = get_candidate(
+        candidate_id
+    )
+
+    if not candidate:
+
+        st.error(
+            "Candidate profile could not be found."
+        )
+
+        return
+
+    if not candidate["resume_path"]:
+
+        st.warning(
+            "Please upload your resume before applying."
+        )
+
+        uploaded_resume = st.file_uploader(
+            "Upload Resume",
+            type=["pdf", "docx"]
+        )
+
+        if uploaded_resume:
+
+            extension = os.path.splitext(
+                uploaded_resume.name
+            )[1]
+
+            filename = (
+                f"{candidate_id}_"
+                f"{datetime.now().strftime('%Y%m%d%H%M%S')}"
+                f"{extension}"
+            )
+
+            resume_path = os.path.join(
+                RESUME_DIR,
+                filename
+            )
+
+            with open(
+                resume_path,
+                "wb"
+            ) as file:
+
+                file.write(
+                    uploaded_resume.getbuffer()
+                )
+
+            update_candidate_resume(
+                candidate_id,
+                uploaded_resume.name,
+                resume_path
+            )
+
+            st.success(
+                "Resume uploaded successfully."
+            )
+
+            st.rerun()
+
+    else:
+
+        st.success(
+            f"Resume uploaded: "
+            f"{candidate['resume_filename']}"
+        )
+
+    st.divider()
+
+    # ========================================================
+    # JOBS
+    # ========================================================
+
+    jobs = get_jobs(
+        active_only=True
+    )
+
+    if not jobs:
+
+        st.info(
+            "There are currently no active jobs."
+        )
+
+        return
+
+    applications = get_candidate_applications(
+        candidate_id
+    )
+
+    applied_job_ids = {
+        application["job_id"]
+        for application in applications
+    }
+
+    for job in jobs:
+
+        with st.container(border=True):
+
+            col1, col2 = st.columns([
+                4,
+                1
+            ])
+
+            with col1:
+
+                st.subheader(
+                    job["title"]
+                )
+
+                description = job.get(
+                    "description",
+                    ""
+                )
+
+                if description:
+
+                    st.write(
+                        description[:600]
+                    )
+
+                required_skills = normalize_skill_list(
+                    job.get("required_skills")
+                )
+
+                preferred_skills = normalize_skill_list(
+                    job.get("preferred_skills")
+                )
+
+                if required_skills:
+
+                    st.write(
+                        "**Required Skills:** "
+                        + ", ".join(
+                            map(str, required_skills)
+                        )
+                    )
+
+                if preferred_skills:
+
+                    st.caption(
+                        "Preferred: "
+                        + ", ".join(
+                            map(str, preferred_skills)
+                        )
+                    )
+
+                st.caption(
+                    f"Minimum AI score: "
+                    f"{job.get('minimum_score', 70)}%"
+                )
+
+            with col2:
+
+                if job["job_id"] in applied_job_ids:
+
+                    st.success(
+                        "Applied"
+                    )
+
+                else:
+
+                    if st.button(
+                        "Apply",
+                        key=f"apply_{job['job_id']}",
+                        use_container_width=True
+                    ):
+
+                        if not candidate["resume_path"]:
+
+                            st.error(
+                                "Please upload your resume first."
+                            )
+
+                            continue
+
+                        # ------------------------------------
+                        # AI EVALUATION
+                        # ------------------------------------
+
+                        with st.spinner(
+                            "AI is screening your resume..."
+                        ):
+
+                            try:
+
+                                result = evaluate_candidate(
+                                    candidate["resume_path"],
+                                    job["description"]
+                                )
+
+                            except Exception as error:
+
+                                st.error(
+                                    "AI evaluation failed."
+                                )
+
+                                st.exception(error)
+
+                                continue
+
+                        score = float(
+                            result.get(
+                                "final_score",
+                                0
+                            ) or 0
+                        )
+
+                        minimum_score = float(
+                            job.get(
+                                "minimum_score",
+                                70
+                            ) or 70
+                        )
+
+                        if score >= minimum_score:
+
+                            application_status = "Shortlisted"
+
+                        else:
+
+                            application_status = "Under Review"
+
+                        # ------------------------------------
+                        # CREATE APPLICATION
+                        # ------------------------------------
+
+                        application_id = create_application(
+                            job_id=job["job_id"],
+                            candidate_id=candidate_id,
+                            status=application_status,
+                            overall_score=score
+                        )
+
+                        # ------------------------------------
+                        # SAVE AI EVALUATION
+                        # ------------------------------------
+
+                        try:
+
+                            save_evaluation(
+                                application_id,
+                                result
+                            )
+
+                        except Exception as error:
+
+                            st.warning(
+                                "Application submitted, "
+                                "but evaluation data could not "
+                                "be saved."
+                            )
+
+                            st.exception(error)
+
+                        st.success(
+                            "Application submitted successfully!"
+                        )
+
+                        if application_status == "Shortlisted":
+
+                            st.balloons()
+
+                            st.success(
+                                "🎉 Congratulations! "
+                                "You have been shortlisted."
+                            )
+
+                        st.rerun()
+
+
+# ============================================================
+# MY APPLICATIONS
+# ============================================================
+
+def show_my_applications():
+
+    user = st.session_state.candidate_user
+
+    applications = get_candidate_applications(
+        user["candidate_id"]
+    )
+
+    st.title("My Applications")
+
+    if not applications:
+
+        st.info(
+            "You haven't submitted any applications yet."
+        )
+
+        return
+
+    for application in applications:
+
+        score = get_application_score(
+            application
+        )
+
+        status = application["status"]
+
+        with st.expander(
+            f"{application['job_title']} "
+            f"— {status}"
+        ):
+
+            col1, col2, col3 = st.columns(3)
+
+            with col1:
+
+                st.metric(
+                    "AI Match",
+                    f"{score:.1f}%"
+                )
+
+            with col2:
+
+                required_score = float(
+                    application.get(
+                        "required_skill_score",
+                        0
+                    ) or 0
+                )
+
+                st.metric(
+                    "Required Skills",
+                    f"{required_score:.1f}%"
+                )
+
+            with col3:
+
+                st.write("**Application Status**")
+
+                if status.lower() == "shortlisted":
+
+                    st.success(status)
+
+                elif status.lower() == "rejected":
+
+                    st.error(status)
+
+                else:
+
+                    st.info(status)
+
+            st.write(
+                f"Applied on: "
+                f"{application['created_at'][:10]}"
+            )
+
+            # =================================================
+            # MATCHED SKILLS
+            # =================================================
+
+            matched_skills = normalize_skill_list(
+                application.get("matched_skills")
+            )
+
+            if matched_skills:
+
+                st.write("### Matched Skills")
+
+                st.success(
+                    ", ".join(
+                        map(str, matched_skills)
+                    )
+                )
+
+            # =================================================
+            # MISSING SKILLS
+            # =================================================
+
+            missing_skills = normalize_skill_list(
+                application.get("missing_skills")
+            )
+
+            if missing_skills:
+
+                st.write("### Skills to Improve")
+
+                st.warning(
+                    ", ".join(
+                        map(str, missing_skills)
+                    )
+                )
+
+            # =================================================
+            # INTERVIEW
+            # =================================================
+
+            interviews = get_interviews_for_application(
+                application["application_id"]
+            )
+
+            if interviews:
+
+                st.divider()
+
+                st.subheader(
+                    "📅 Interview"
+                )
+
+                for interview in interviews:
+
+                    st.info(
+                        f"**Date:** "
+                        f"{interview['interview_date']}\n\n"
+                        f"**Time:** "
+                        f"{interview['interview_time']}\n\n"
+                        f"**Type:** "
+                        f"{interview['interview_type']}\n\n"
+                        f"**Interviewer:** "
+                        f"{interview['interviewer']}"
+                    )
+
+                    if interview.get("meeting_link"):
+
+                        st.link_button(
+                            "Join Interview",
+                            interview["meeting_link"]
+                        )
+
+
+# ============================================================
+# NOTIFICATIONS
+# ============================================================
+
+def show_notifications():
+
+    user = st.session_state.candidate_user
+
+    notifications = get_candidate_notifications(
+        user["candidate_id"]
+    )
+
+    st.title("🔔 Notifications")
+
+    if not notifications:
+
+        st.info(
+            "You don't have any notifications yet."
+        )
+
+        return
+
+    for notification in notifications:
+
+        if notification["is_read"]:
+
+            with st.container(border=True):
+
+                st.write(
+                    f"**{notification['title']}**"
+                )
+
+                st.write(
+                    notification["message"]
+                )
+
+                st.caption(
+                    notification["created_at"]
+                )
+
+        else:
+
+            with st.container(border=True):
+
+                st.subheader(
+                    notification["title"]
+                )
+
+                st.write(
+                    notification["message"]
+                )
+
+                st.caption(
+                    notification["created_at"]
+                )
+
+                if st.button(
+                    "Mark as read",
+                    key=(
+                        f"read_"
+                        f"{notification['notification_id']}"
+                    )
+                ):
+
+                    mark_notification_read(
+                        notification["notification_id"]
+                    )
+
+                    st.rerun()
+
+
+# ============================================================
+# AI IMPROVEMENT
+# ============================================================
+
+def show_ai_improvement():
+
+    user = st.session_state.candidate_user
+
+    applications = get_candidate_applications(
+        user["candidate_id"]
+    )
+
+    st.title("🧠 AI Career Improvement")
+
+    st.write(
+        "Get AI-based suggestions based on your "
+        "actual application results."
+    )
+
+    if not applications:
+
+        st.info(
+            "Apply for a job first so the AI can "
+            "analyse your profile."
+        )
+
+        return
+
+    selected_application = st.selectbox(
+        "Select a job",
+        applications,
+        format_func=lambda application:
+            application["job_title"]
+    )
+
+    score = get_application_score(
+        selected_application
+    )
+
+    st.metric(
+        "Current AI Match",
+        f"{score:.1f}%"
+    )
 
     st.divider()
 
     st.subheader(
-        "🤖 Recruitment AI Agent"
+        "AI Suggestions"
     )
 
+    suggestions = generate_improvement_suggestions(
+        selected_application
+    )
 
-    progress = st.empty()
+    for suggestion in suggestions:
 
+        priority = suggestion["priority"]
 
-    try:
+        if priority == "High":
 
-        progress.info(
-            "Analyzing job requirements..."
-        )
-
-
-        progress.info(
-            "Analyzing candidate resume..."
-        )
-
-
-        result = screen_candidate_with_agent(
-
-            resume_path,
-
-            job["description"]
-        )
-
-
-        progress.info(
-            "Calculating candidate eligibility..."
-        )
-
-
-        # ----------------------------------------------------
-        # SCORE
-        # ----------------------------------------------------
-
-        score = get_score(
-            result
-        )
-
-
-        # ----------------------------------------------------
-        # STATUS
-        # ----------------------------------------------------
-
-        status, missing_required = (
-            determine_status(
-                result,
-                job
+            st.error(
+                f"🔴 **{suggestion['title']}**\n\n"
+                f"{suggestion['message']}"
             )
+
+        elif priority == "Medium":
+
+            st.warning(
+                f"🟡 **{suggestion['title']}**\n\n"
+                f"{suggestion['message']}"
+            )
+
+        else:
+
+            st.success(
+                f"🟢 **{suggestion['title']}**\n\n"
+                f"{suggestion['message']}"
+            )
+
+
+# ============================================================
+# RECOMMENDED JOBS
+# ============================================================
+
+def show_recommended_jobs():
+
+    user = st.session_state.candidate_user
+
+    st.subheader(
+        "💼 Recommended Jobs"
+    )
+
+    recommendations = get_recommended_jobs(
+        user["candidate_id"]
+    )
+
+    if not recommendations:
+
+        st.info(
+            "No additional job recommendations available yet."
         )
 
+        return
 
-        # ----------------------------------------------------
-        # SKILLS
-        # ----------------------------------------------------
+    for recommendation in recommendations:
 
-        matched_skills = get_list(
+        job = recommendation["job"]
 
-            result,
+        score = recommendation["score"]
 
-            [
-                "matched_required_skills",
+        matches = recommendation["matches"]
 
-                "matched_skills"
-            ]
-        )
+        with st.container(border=True):
 
+            col1, col2 = st.columns([
+                3,
+                1
+            ])
 
-        missing_skills = get_list(
+            with col1:
 
-            result,
+                st.write(
+                    f"### {job['title']}"
+                )
 
-            [
-                "missing_required_skills",
+                if matches:
 
-                "missing_skills"
-            ]
-        )
+                    st.write(
+                        "Matching skills: "
+                        + ", ".join(
+                            map(str, matches)
+                        )
+                    )
 
+            with col2:
 
-        # Add recruiter-defined missing skills
-        # without duplicating them.
-
-        for skill in missing_required:
-
-            if skill not in missing_skills:
-
-                missing_skills.append(
-                    skill
+                st.metric(
+                    "AI Match",
+                    f"{score:.0f}%"
                 )
 
 
-        # ----------------------------------------------------
-        # DATABASE
-        # ----------------------------------------------------
+# ============================================================
+# FEEDBACK
+# ============================================================
 
-        candidate_id = create_candidate(
+def show_feedback():
 
-            name=candidate_name.strip(),
+    user = st.session_state.candidate_user
 
-            email=candidate_email.strip(),
+    st.title("💬 Feedback")
 
-            resume_filename=uploaded_resume.name,
+    st.write(
+        "We would love to hear your feedback "
+        "about the Recruiter AI portal."
+    )
 
-            resume_path=resume_path
+    category = st.selectbox(
+        "Feedback Type",
+        [
+            "General Feedback",
+            "Bug Report",
+            "Suggestion",
+            "Application Issue",
+            "Other"
+        ]
+    )
+
+    message = st.text_area(
+        "Your Feedback",
+        height=180,
+        placeholder=(
+            "Tell us what you think..."
+        )
+    )
+
+    if st.button(
+        "Submit Feedback",
+        use_container_width=True
+    ):
+
+        if not message.strip():
+
+            st.warning(
+                "Please enter your feedback."
+            )
+
+            return
+
+        # --------------------------------------------
+        # SAVE TO DATABASE
+        # --------------------------------------------
+
+        save_feedback(
+            candidate_id=user["candidate_id"],
+            candidate_email=user["email"],
+            category=category,
+            message=message.strip()
         )
 
+        # --------------------------------------------
+        # SEND EMAIL
+        # --------------------------------------------
 
-        application_id = create_application(
-
-            job_id=selected_job_id,
-
-            candidate_id=candidate_id,
-
-            status=status,
-
-            overall_score=score
+        sent, email_message = send_feedback_email(
+            candidate_name=user["name"],
+            candidate_email=user["email"],
+            category=category,
+            message=message.strip()
         )
 
+        if sent:
 
-        save_evaluation(
+            st.success(
+                "Thank you! Your feedback has been sent successfully."
+            )
 
-            application_id,
+        else:
 
-            result
-        )
+            st.success(
+                "Thank you! Your feedback has been saved."
+            )
+
+            st.info(
+                email_message
+            )
 
 
-        progress.success(
-            "AI screening completed!"
-        )
+# ============================================================
+# MAIN APPLICATION
+# ============================================================
 
+if not st.session_state.candidate_logged_in:
 
-        # ====================================================
-        # RESULT
-        # ====================================================
+    show_login_page()
+
+else:
+
+    show_sidebar()
+
+    page = st.session_state.candidate_page
+
+    if page == "Dashboard":
+
+        show_dashboard()
+
+    elif page == "Find Jobs":
+
+        show_find_jobs()
+
+    elif page == "My Applications":
+
+        show_my_applications()
+
+    elif page == "Notifications":
+
+        show_notifications()
+
+    elif page == "AI Improvement":
+
+        show_ai_improvement()
 
         st.divider()
 
-        st.header(
-            "Application Result"
-        )
+        show_recommended_jobs()
 
+    elif page == "Feedback":
 
-        col1, col2 = st.columns(2)
-
-
-        with col1:
-
-            st.metric(
-
-                "AI Match Score",
-
-                f"{score:.2f}%"
-            )
-
-
-        with col2:
-
-            st.metric(
-
-                "Status",
-
-                status
-            )
-
-
-        st.write(
-            f"**Application ID:** "
-            f"APP-{application_id:04d}"
-        )
-
-
-        if status == "Shortlisted":
-
-            st.success(
-
-                "🎉 Your application has been "
-                "shortlisted based on the current "
-                "screening criteria."
-            )
-
-
-        elif status == "Under Review":
-
-            st.info(
-
-                "⏳ Your application is currently "
-                "under review."
-            )
-
-
-        else:
-
-            st.warning(
-
-                "Your application is currently "
-                "not eligible based on the defined "
-                "screening requirements."
-            )
-
-
-        # ----------------------------------------------------
-        # MATCHED
-        # ----------------------------------------------------
-
-        st.subheader(
-            "✅ Matched Skills"
-        )
-
-
-        if matched_skills:
-
-            for skill in matched_skills:
-
-                st.success(
-                    str(skill)
-                )
-
-        else:
-
-            st.info(
-                "No matched skills detected."
-            )
-
-
-        # ----------------------------------------------------
-        # MISSING
-        # ----------------------------------------------------
-
-        if missing_skills:
-
-            st.subheader(
-                "❌ Missing Skills"
-            )
-
-
-            for skill in missing_skills:
-
-                st.warning(
-                    str(skill)
-                )
-
-
-        # ----------------------------------------------------
-        # DETAILS
-        # ----------------------------------------------------
-
-        with st.expander(
-            "View AI Evaluation Details"
-        ):
-
-            st.json(
-                result
-            )
-
-
-        st.caption(
-
-            "Your application has been saved and "
-            "included in the candidate pool for "
-            "this position."
-        )
-
-
-    except Exception as error:
-
-        progress.empty()
-
-
-        st.error(
-            "The Recruitment AI Agent could not "
-            "complete the screening."
-        )
-
-
-        st.exception(
-            error
-        )
+        show_feedback()
