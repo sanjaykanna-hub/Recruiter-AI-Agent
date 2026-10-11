@@ -5,3 +5,8 @@ __pycache__/
 .env.*
 *.log
 data/*.db
+
+# Gmail API OAuth credentials
+credentials.json
+token.json
+
