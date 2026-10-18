@@ -1,120 +1,34 @@
-from backend.recruitment_agent import create_recruitment_agent
 
+import requests
 
-# --------------------------------------------------
-# Test Job Description
-# --------------------------------------------------
+API_URL = "http://127.0.0.1:8000/agent/chat"
 
-JOB_DESCRIPTION = """
-React Frontend Developer
+tests = [
+    "List the active jobs in the database.",
+    "Show all applicants for job ID 1.",
+    "Rank the top 5 candidates for job ID 1 by their evaluation scores, from highest to lowest.",
+]
 
-We are looking for a React Frontend Developer to build
-responsive and user-friendly web applications.
+for question in tests:
+    print("\n" + "=" * 60)
+    print("QUESTION:", question)
 
-Required Skills:
-- React.js
-- JavaScript
-- HTML5
-- CSS3
-- Git
-- REST APIs
-- Responsive Web Design
+    try:
+        response = requests.post(
+            API_URL,
+            json={"message": question},
+            timeout=120,
+        )
 
-Preferred Skills:
-- TypeScript
-- Redux
-- Next.js
-- Node.js
-- MongoDB
+        print("STATUS:", response.status_code)
 
-Responsibilities:
-- Develop web applications using React.js.
-- Build reusable UI components.
-- Integrate REST APIs.
-- Debug and optimize frontend applications.
-- Use Git for version control.
-"""
+        if response.ok:
+            data = response.json()
+            print("RESPONSE:")
+            print(data.get("response", data))
+            print("THREAD ID:", data.get("thread_id"))
+        else:
+            print("ERROR:", response.text)
 
-
-# --------------------------------------------------
-# Resume to test
-# --------------------------------------------------
-# Change this path if you want to test another resume.
-
-RESUME_PATH = "data/resumes/candidate2.pdf"
-
-
-# --------------------------------------------------
-# Create Agent
-# --------------------------------------------------
-
-print("\nCreating Recruiter AI Agent...")
-
-agent = create_recruitment_agent()
-
-print("Agent created successfully.\n")
-
-
-# --------------------------------------------------
-# Send request to Agent
-# --------------------------------------------------
-
-prompt = f"""
-Evaluate this candidate for the following job.
-
-Resume:
-{RESUME_PATH}
-
-Job Description:
-{JOB_DESCRIPTION}
-
-Please:
-1. Analyze the job requirements.
-2. Evaluate the candidate's resume.
-3. Identify matched skills.
-4. Identify missing skills.
-5. Check supporting evidence for important skills.
-6. Provide the candidate's score.
-7. Give a short recruitment summary.
-"""
-
-
-print("Running Recruiter AI Agent...")
-print("=" * 70)
-
-result = agent.invoke(
-    {
-        "messages": [
-            {
-                "role": "user",
-                "content": prompt,
-            }
-        ]
-    }
-)
-
-
-# --------------------------------------------------
-# Display Result
-# --------------------------------------------------
-
-print("\n")
-print("=" * 70)
-print("RECRUITER AI AGENT RESULT")
-print("=" * 70)
-
-messages = result.get("messages", [])
-
-if messages:
-    final_message = messages[-1]
-
-    if hasattr(final_message, "content"):
-        print(final_message.content)
-    else:
-        print(final_message)
-else:
-    print(result)
-
-print("=" * 70)
-print("TEST COMPLETED")
-print("=" * 70)
+    except requests.RequestException as exc:
+        print("REQUEST FAILED:", exc)
