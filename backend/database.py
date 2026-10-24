@@ -4,19 +4,15 @@ import json
 
 import hashlib
 
+import secrets
+
 import os
 
-
 import re
-
 
 from datetime import datetime
 
 from pathlib import Path
-
-
-
-
 
 # ============================================================
 
@@ -24,29 +20,19 @@ from pathlib import Path
 
 # ============================================================
 
-
-
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 DATA_DIR = BASE_DIR / "data"
 
 DB_PATH = DATA_DIR / "recruiter_ai.db"
 
-
-
 DATA_DIR.mkdir(parents=True, exist_ok=True)
-
-
-
-
 
 # ============================================================
 
 # CONNECTION
 
 # ============================================================
-
-
 
 def get_connection():
 
@@ -56,25 +42,17 @@ def get_connection():
 
     return conn
 
-
-
-
-
 # ============================================================
 
 # DATABASE INITIALIZATION
 
 # ============================================================
 
-
-
 def init_database():
 
     conn = get_connection()
 
     cursor = conn.cursor()
-
-
 
     cursor.execute("""
 
@@ -100,8 +78,6 @@ def init_database():
 
     """)
 
-
-
     cursor.execute("""
 
         CREATE TABLE IF NOT EXISTS candidates (
@@ -121,8 +97,6 @@ def init_database():
         )
 
     """)
-
-
 
     cursor.execute("""
 
@@ -147,8 +121,6 @@ def init_database():
         )
 
     """)
-
-
 
     cursor.execute("""
 
@@ -190,8 +162,6 @@ def init_database():
 
     """)
 
-
-
     cursor.execute("""
 
         CREATE TABLE IF NOT EXISTS interviews (
@@ -222,8 +192,6 @@ def init_database():
 
     """)
 
-
-
     cursor.execute("""
 
         CREATE TABLE IF NOT EXISTS candidate_accounts (
@@ -245,8 +213,6 @@ def init_database():
         )
 
     """)
-
-
 
     cursor.execute("""
 
@@ -274,8 +240,6 @@ def init_database():
 
     """)
 
-
-
     cursor.execute("""
 
         CREATE TABLE IF NOT EXISTS feedback (
@@ -295,8 +259,6 @@ def init_database():
         )
 
     """)
-
-
 
     cursor.execute("""
 
@@ -322,23 +284,27 @@ def init_database():
 
     """)
 
+    # Add security-question columns to older databases without deleting existing data.
 
+    cursor.execute("PRAGMA table_info(candidate_accounts)")
+
+    account_columns = {row["name"] for row in cursor.fetchall()}
+
+    if "security_question" not in account_columns:
+
+        cursor.execute("ALTER TABLE candidate_accounts ADD COLUMN security_question TEXT DEFAULT ''")
+
+    if "security_answer_hash" not in account_columns:
+
+        cursor.execute("ALTER TABLE candidate_accounts ADD COLUMN security_answer_hash TEXT DEFAULT ''")
 
     conn.commit()
 
     conn.close()
 
-
-
-
-
 # Ensure the database tables exist when this module is imported.
 
 init_database()
-
-
-
-
 
 # ============================================================
 
@@ -346,27 +312,19 @@ init_database()
 
 # ============================================================
 
-
-
 def _json_load(value, default=None):
 
     if default is None:
 
         default = []
 
-
-
     if value is None:
 
         return default
 
-
-
     if isinstance(value, (list, dict)):
 
         return value
-
-
 
     try:
 
@@ -375,10 +333,6 @@ def _json_load(value, default=None):
     except (TypeError, ValueError, json.JSONDecodeError):
 
         return default
-
-
-
-
 
 def _json_dump(value):
 
@@ -390,10 +344,6 @@ def _json_dump(value):
 
         return json.dumps(str(value))
 
-
-
-
-
 def _hash_password(password):
 
     # Compatibility helper. For a production app, use a password-hashing
@@ -402,25 +352,15 @@ def _hash_password(password):
 
     return hashlib.sha256(password.encode("utf-8")).hexdigest()
 
-
-
-
-
 def _row_to_dict(row):
 
     return dict(row) if row is not None else None
-
-
-
-
 
 # ============================================================
 
 # JOB FUNCTIONS
 
 # ============================================================
-
-
 
 def create_job(
 
@@ -480,10 +420,6 @@ def create_job(
 
         conn.close()
 
-
-
-
-
 def get_jobs(active_only=False):
 
     conn = get_connection()
@@ -508,8 +444,6 @@ def get_jobs(active_only=False):
 
             cursor.execute("SELECT * FROM jobs ORDER BY job_id DESC")
 
-
-
         results = []
 
         for row in cursor.fetchall():
@@ -530,10 +464,6 @@ def get_jobs(active_only=False):
 
         conn.close()
 
-
-
-
-
 def get_job(job_id):
 
     conn = get_connection()
@@ -550,8 +480,6 @@ def get_job(job_id):
 
             return None
 
-
-
         item = dict(row)
 
         item["id"] = item["job_id"]
@@ -565,10 +493,6 @@ def get_job(job_id):
     finally:
 
         conn.close()
-
-
-
-
 
 def update_job_criteria(
 
@@ -586,15 +510,11 @@ def update_job_criteria(
 
     values = []
 
-
-
     if minimum_score is not None:
 
         updates.append("minimum_score = ?")
 
         values.append(minimum_score)
-
-
 
     if required_skills is not None:
 
@@ -602,21 +522,15 @@ def update_job_criteria(
 
         values.append(_json_dump(required_skills))
 
-
-
     if preferred_skills is not None:
 
         updates.append("preferred_skills = ?")
 
         values.append(_json_dump(preferred_skills))
 
-
-
     if not updates:
 
         return True
-
-
 
     values.append(job_id)
 
@@ -640,17 +554,11 @@ def update_job_criteria(
 
         conn.close()
 
-
-
-
-
 # ============================================================
 
 # CANDIDATE FUNCTIONS
 
 # ============================================================
-
-
 
 def create_candidate(name, email, resume_filename, resume_path):
 
@@ -688,10 +596,6 @@ def create_candidate(name, email, resume_filename, resume_path):
 
         conn.close()
 
-
-
-
-
 def get_candidate(candidate_id):
 
     conn = get_connection()
@@ -713,10 +617,6 @@ def get_candidate(candidate_id):
     finally:
 
         conn.close()
-
-
-
-
 
 def get_candidate_by_email(email):
 
@@ -741,10 +641,6 @@ def get_candidate_by_email(email):
     finally:
 
         conn.close()
-
-
-
-
 
 def update_candidate_resume(candidate_id, resume_filename, resume_path):
 
@@ -780,17 +676,11 @@ def update_candidate_resume(candidate_id, resume_filename, resume_path):
 
         conn.close()
 
-
-
-
-
 # ============================================================
 
 # APPLICATION FUNCTIONS
 
 # ============================================================
-
-
 
 def create_application(
 
@@ -822,8 +712,6 @@ def create_application(
 
         cursor = conn.cursor()
 
-
-
         cursor.execute("""
 
             SELECT application_id
@@ -836,15 +724,11 @@ def create_application(
 
         """, (job_id, candidate_id))
 
-
-
         existing = cursor.fetchone()
 
         if existing:
 
             return existing["application_id"]
-
-
 
         cursor.execute("""
 
@@ -870,8 +754,6 @@ def create_application(
 
         ))
 
-
-
         application_id = cursor.lastrowid
 
         conn.commit()
@@ -888,15 +770,9 @@ def create_application(
 
         conn.close()
 
-
-
-
-
 def _application_to_dict(row):
 
     data = dict(row)
-
-
 
     data["id"] = data["application_id"]
 
@@ -906,15 +782,11 @@ def _application_to_dict(row):
 
     data["status"] = data.get("status") or "Under Review"
 
-
-
     app_score = float(data.get("application_overall_score") or 0)
 
     final = data.get("final_score")
 
     final_score = float(final if final is not None else app_score)
-
-
 
     score_fields = [
 
@@ -940,8 +812,6 @@ def _application_to_dict(row):
 
         data[field] = float(data.get(field) or 0)
 
-
-
     data["final_score"] = final_score
 
     data["final_candidate_score"] = final_score
@@ -949,8 +819,6 @@ def _application_to_dict(row):
     data["score"] = final_score
 
     data["overall_score"] = final_score
-
-
 
     data["matched_skills"] = _json_load(data.get("matched_skills"), [])
 
@@ -961,8 +829,6 @@ def _application_to_dict(row):
     data["missing_required_skills"] = data["missing_skills"]
 
     data["evidence"] = _json_load(data.get("evidence"), [])
-
-
 
     full_result = data.get("full_result")
 
@@ -976,19 +842,11 @@ def _application_to_dict(row):
 
     data["evaluation_json"] = full_result
 
-
-
     if "application_created_at" in data:
 
         data["created_at"] = data.get("application_created_at")
 
-
-
     return data
-
-
-
-
 
 _APPLICATION_SELECT = """
 
@@ -1060,10 +918,6 @@ _APPLICATION_SELECT = """
 
 """
 
-
-
-
-
 def get_applications_for_job(job_id):
 
     conn = get_connection()
@@ -1093,10 +947,6 @@ def get_applications_for_job(job_id):
     finally:
 
         conn.close()
-
-
-
-
 
 def get_application(application_id):
 
@@ -1128,23 +978,15 @@ def get_application(application_id):
 
         conn.close()
 
-
-
-
-
 # ============================================================
 
 # EVALUATION FUNCTIONS
 
 # ============================================================
 
-
-
 def save_evaluation(application_id, result):
 
     result = result or {}
-
-
 
     def score(key, fallback=None):
 
@@ -1158,8 +1000,6 @@ def save_evaluation(application_id, result):
 
             return 0.0
 
-
-
     final_score = score(
 
         "final_score",
@@ -1167,8 +1007,6 @@ def save_evaluation(application_id, result):
         result.get("final_candidate_score", 0)
 
     )
-
-
 
     matched = result.get(
 
@@ -1187,8 +1025,6 @@ def save_evaluation(application_id, result):
     )
 
     evidence = result.get("evidence", [])
-
-
 
     values = (
 
@@ -1220,8 +1056,6 @@ def save_evaluation(application_id, result):
 
     )
 
-
-
     conn = get_connection()
 
     try:
@@ -1241,8 +1075,6 @@ def save_evaluation(application_id, result):
         """, (application_id,))
 
         existing = cursor.fetchone()
-
-
 
         if existing:
 
@@ -1320,8 +1152,6 @@ def save_evaluation(application_id, result):
 
             """, (application_id,) + values)
 
-
-
         cursor.execute("""
 
             UPDATE applications
@@ -1332,8 +1162,6 @@ def save_evaluation(application_id, result):
 
         """, (final_score, application_id))
 
-
-
         conn.commit()
 
         return True
@@ -1342,17 +1170,11 @@ def save_evaluation(application_id, result):
 
         conn.close()
 
-
-
-
-
 # ============================================================
 
 # APPLICATION STATUS AND NOTIFICATIONS
 
 # ============================================================
-
-
 
 def update_application_status(
 
@@ -1394,19 +1216,13 @@ def update_application_status(
 
         row = cursor.fetchone()
 
-
-
         if not row:
 
             return False
 
-
-
         old_status = row["status"]
 
         candidate_id = row["candidate_id"]
-
-
 
         cursor.execute("""
 
@@ -1423,8 +1239,6 @@ def update_application_status(
     finally:
 
         conn.close()
-
-
 
     if create_notification_record and old_status != status:
 
@@ -1464,13 +1278,7 @@ def update_application_status(
 
         )
 
-
-
     return True
-
-
-
-
 
 # ============================================================
 
@@ -1478,17 +1286,13 @@ def update_application_status(
 
 # ============================================================
 
-
-
-def create_candidate_account(name, email, password):
+def create_candidate_account(name, email, password, security_question, security_answer):
 
     conn = get_connection()
 
     try:
 
         cursor = conn.cursor()
-
-
 
         cursor.execute("""
 
@@ -1504,8 +1308,6 @@ def create_candidate_account(name, email, password):
 
             return None
 
-
-
         cursor.execute("""
 
             SELECT candidate_id FROM candidates
@@ -1517,8 +1319,6 @@ def create_candidate_account(name, email, password):
         """, (email,))
 
         existing_candidate = cursor.fetchone()
-
-
 
         if existing_candidate:
 
@@ -1540,17 +1340,17 @@ def create_candidate_account(name, email, password):
 
             candidate_id = cursor.lastrowid
 
-
-
         cursor.execute("""
 
             INSERT INTO candidate_accounts (
 
-                candidate_id, name, email, password_hash, created_at
+                candidate_id, name, email, password_hash, created_at,
+
+                security_question, security_answer_hash
 
             )
 
-            VALUES (?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
 
         """, (
 
@@ -1558,15 +1358,17 @@ def create_candidate_account(name, email, password):
 
             name,
 
-            email,
+            email.strip(),
 
             _hash_password(password),
 
-            datetime.now().isoformat()
+            datetime.now().isoformat(),
+
+            security_question,
+
+            _hash_password(security_answer.strip().casefold()),
 
         ))
-
-
 
         account_id = cursor.lastrowid
 
@@ -1577,10 +1379,6 @@ def create_candidate_account(name, email, password):
     finally:
 
         conn.close()
-
-
-
-
 
 def authenticate_candidate(email, password):
 
@@ -1608,9 +1406,85 @@ def authenticate_candidate(email, password):
 
         conn.close()
 
+def change_candidate_password(email, current_password, new_password):
 
+    """
 
+    Change a candidate's password after verifying the current password.
 
+    Returns True if the password was changed, otherwise False.
+
+    Uses the same hash helper as candidate registration and login
+
+    to remain compatible with existing accounts.
+
+    """
+
+    if not email or not current_password or not new_password:
+
+        return False
+
+    conn = get_connection()
+
+    try:
+
+        cursor = conn.cursor()
+
+        cursor.execute(
+
+            """
+
+            SELECT id
+
+            FROM candidate_accounts
+
+            WHERE LOWER(email) = LOWER(?)
+
+              AND password_hash = ?
+
+            LIMIT 1
+
+            """,
+
+            (email.strip(), _hash_password(current_password)),
+
+        )
+
+        account = cursor.fetchone()
+
+        if account is None:
+
+            return False
+
+        cursor.execute(
+
+            """
+
+            UPDATE candidate_accounts
+
+            SET password_hash = ?
+
+            WHERE id = ?
+
+            """,
+
+            (_hash_password(new_password), account["id"]),
+
+        )
+
+        conn.commit()
+
+        return cursor.rowcount == 1
+
+    except Exception:
+
+        conn.rollback()
+
+        raise
+
+    finally:
+
+        conn.close()
 
 def get_candidate_applications(candidate_id):
 
@@ -1676,8 +1550,6 @@ def get_candidate_applications(candidate_id):
 
         """, (candidate_id,))
 
-
-
         results = []
 
         for row in cursor.fetchall():
@@ -1700,25 +1572,17 @@ def get_candidate_applications(candidate_id):
 
             results.append(item)
 
-
-
         return results
 
     finally:
 
         conn.close()
 
-
-
-
-
 # ============================================================
 
 # NOTIFICATIONS
 
 # ============================================================
-
-
 
 def create_notification(
 
@@ -1778,10 +1642,6 @@ def create_notification(
 
         conn.close()
 
-
-
-
-
 def get_candidate_notifications(candidate_id):
 
     conn = get_connection()
@@ -1806,10 +1666,6 @@ def get_candidate_notifications(candidate_id):
 
         conn.close()
 
-
-
-
-
 def mark_notification_read(notification_id):
 
     conn = get_connection()
@@ -1832,17 +1688,11 @@ def mark_notification_read(notification_id):
 
         conn.close()
 
-
-
-
-
 # ============================================================
 
 # FEEDBACK
 
 # ============================================================
-
-
 
 def save_feedback(candidate_id, candidate_email, category, message):
 
@@ -1886,14 +1736,12 @@ def save_feedback(candidate_id, candidate_email, category, message):
 
         conn.close()
 
-
-
-
-
 # ============================================================
 
 # ============================================================
+
 # EMAIL DELIVERY (GMAIL API OAUTH)
+
 # ============================================================
 
 def send_interview_email(
@@ -1907,12 +1755,12 @@ def send_interview_email(
     meeting_link="",
     notes=""
 ):
-    """Send an interview invitation through Gmail API OAuth."""
+    """Send an interview invitation using Gmail API OAuth."""
     import base64
     from email.message import EmailMessage
 
     if not candidate_email or not str(candidate_email).strip():
-        print("Interview email not sent: candidate email address is missing.")
+        print("Interview email not sent: candidate email is missing.")
         return False
 
     try:
@@ -1920,12 +1768,13 @@ def send_interview_email(
         from google.oauth2.credentials import Credentials
         from google_auth_oauthlib.flow import InstalledAppFlow
         from googleapiclient.discovery import build
-    except ImportError:
+    except ImportError as exc:
         print(
-            "Interview email not sent: install Gmail API libraries with "
-            "`python -m pip install google-api-python-client "
-            "google-auth-httplib2 google-auth-oauthlib`."
+            "Gmail libraries are missing. Run: "
+            "python -m pip install google-api-python-client "
+            "google-auth-httplib2 google-auth-oauthlib"
         )
+        print(f"Import error: {exc}")
         return False
 
     base_dir = Path(__file__).resolve().parent.parent
@@ -1934,31 +1783,40 @@ def send_interview_email(
     scopes = ["https://www.googleapis.com/auth/gmail.send"]
 
     if not credentials_file.exists():
-        print(f"Interview email not sent: {credentials_file} was not found.")
+        print(f"Gmail credentials not found: {credentials_file}")
         return False
 
     try:
         creds = None
         if token_file.exists():
             try:
-                creds = Credentials.from_authorized_user_file(
-                    str(token_file), scopes
-                )
-            except (ValueError, OSError) as exc:
-                print(f"Could not read Gmail token file: {exc}")
-                return False
+                creds = Credentials.from_authorized_user_file(str(token_file), scopes)
+            except (ValueError, OSError, json.JSONDecodeError) as exc:
+                print(f"Could not read token.json: {exc}")
+                creds = None
+
+        if creds and not creds.valid:
+            if creds.expired and creds.refresh_token:
+                try:
+                    creds.refresh(Request())
+                except Exception as exc:
+                    print(f"Gmail token refresh failed: {exc}")
+                    creds = None
+            else:
+                creds = None
 
         if not creds or not creds.valid:
-            if creds and creds.expired and creds.refresh_token:
-                creds.refresh(Request())
-            else:
-                flow = InstalledAppFlow.from_client_secrets_file(
-                    str(credentials_file), scopes
-                )
-                creds = flow.run_local_server(port=0)
+            print("Opening Google authorization for Gmail sending...")
+            flow = InstalledAppFlow.from_client_secrets_file(
+                str(credentials_file), scopes=scopes
+            )
+            creds = flow.run_local_server(port=0)
 
-            token_file.write_text(creds.to_json(), encoding="utf-8")
+        if not creds or not creds.valid:
+            print("Gmail authorization did not produce a valid token.")
+            return False
 
+        token_file.write_text(creds.to_json(), encoding="utf-8")
         service = build("gmail", "v1", credentials=creds)
 
         message = EmailMessage()
@@ -1977,25 +1835,21 @@ def send_interview_email(
             "Please be ready at the scheduled time.\n\n"
             "Best regards,\nRecruitment Team"
         )
-
-        encoded_message = base64.urlsafe_b64encode(
-            message.as_bytes()
-        ).decode("utf-8")
-
+        encoded_message = base64.urlsafe_b64encode(message.as_bytes()).decode("utf-8")
         result = service.users().messages().send(
             userId="me", body={"raw": encoded_message}
         ).execute()
 
-        if result.get("id"):
+        message_id = result.get("id")
+        if message_id:
             print(
                 f"Interview email accepted by Gmail API for {candidate_email}. "
-                f"Message ID: {result['id']}"
+                f"Message ID: {message_id}"
             )
             return True
 
-        print("Gmail API did not return a message ID; email status is unknown.")
+        print("Gmail returned no message ID; delivery is unconfirmed.")
         return False
-
     except Exception as exc:
         print(f"Interview email failed: {type(exc).__name__}: {exc}")
         return False
@@ -2005,66 +1859,100 @@ def send_interview_email(
 
 # ============================================================
 
-
 def _find_resume_email(evaluation_result):
+
     """Find a candidate email address in resume evaluation data."""
+
     import json
+
     import re
 
     if not evaluation_result:
+
         return None
 
     # Convert JSON strings into Python objects when possible.
+
     if isinstance(evaluation_result, str):
+
         try:
+
             evaluation_result = json.loads(evaluation_result)
+
         except (json.JSONDecodeError, TypeError):
+
             pass
 
     email_pattern = re.compile(
-        r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"
+        r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}",
+        re.IGNORECASE,
     )
 
     preferred_keys = {
+
         "email",
+
         "candidate_email",
+
         "contact_email",
+
         "personal_email",
+
         "resume_email",
+
     }
 
     # First, look for email fields in structured data.
+
     def find_in_data(data):
+
         if isinstance(data, dict):
+
             # Prefer fields explicitly identified as email addresses.
+
             for key, value in data.items():
+
                 if str(key).strip().lower() in preferred_keys:
+
                     if isinstance(value, str):
+
                         match = email_pattern.search(value)
+
                         if match:
+
                             return match.group(0)
 
             # Search nested dictionaries and lists.
+
             for value in data.values():
+
                 result = find_in_data(value)
+
                 if result:
+
                     return result
 
         elif isinstance(data, list):
+
             for item in data:
+
                 result = find_in_data(item)
+
                 if result:
+
                     return result
 
         elif isinstance(data, str):
+
             match = email_pattern.search(data)
+
             if match:
+
                 return match.group(0)
 
         return None
 
     return find_in_data(evaluation_result)
-
 
 def create_interview(
 
@@ -2132,8 +2020,6 @@ def create_interview(
 
             raise ValueError(f"Application {application_id} was not found.")
 
-
-
         cursor.execute("""
 
             SELECT id FROM interviews
@@ -2165,8 +2051,6 @@ def create_interview(
             # Do not send duplicate emails just because the same record is re-opened.
 
             return existing["id"]
-
-
 
         cursor.execute("""
 
@@ -2228,11 +2112,7 @@ def create_interview(
 
         conn.close()
 
-
-
     update_application_status(application_id, "Interview Scheduled")
-
-
 
     email_sent = send_interview_email(
 
@@ -2268,10 +2148,6 @@ def create_interview(
 
     return interview_id
 
-
-
-
-
 def get_interviews_for_application(application_id):
 
     conn = get_connection()
@@ -2296,17 +2172,11 @@ def get_interviews_for_application(application_id):
 
         conn.close()
 
-
-
-
-
 # ============================================================
 
 # AGENT ACTION LOG
 
 # ============================================================
-
-
 
 def save_agent_action(
 
@@ -2333,8 +2203,6 @@ def save_agent_action(
         if action_result is not None and not isinstance(action_result, str):
 
             action_result = _json_dump(action_result)
-
-
 
         cursor.execute("""
 
@@ -2376,10 +2244,6 @@ def save_agent_action(
 
         conn.close()
 
-
-
-
-
 def get_agent_actions(application_id=None):
 
     conn = get_connection()
@@ -2414,25 +2278,17 @@ def get_agent_actions(application_id=None):
 
         conn.close()
 
-
-
-
-
 # ============================================================
 
 # DATABASE SELF-TEST
 
 # ============================================================
 
-
-
 def database_test():
 
     print("\nRecruiter AI Database Test")
 
     print("=" * 45)
-
-
 
     conn = get_connection()
 
@@ -2451,8 +2307,6 @@ def database_test():
         """)
 
         tables = {row["name"] for row in cursor.fetchall()}
-
-
 
         for table in [
 
@@ -2482,18 +2336,106 @@ def database_test():
 
         conn.close()
 
-
-
     print(f"\nJobs found: {len(get_jobs())}")
 
     print(f"Active jobs found: {len(get_jobs(active_only=True))}")
 
     print("\nDatabase test completed.")
 
-
-
-
-
 if __name__ == "__main__":
 
     database_test()
+
+def get_candidate_security_question(email):
+
+    """Return the saved security question for an account, or None."""
+
+    if not email:
+
+        return None
+
+    conn = get_connection()
+
+    try:
+
+        cursor = conn.cursor()
+
+        cursor.execute(
+
+            "SELECT security_question FROM candidate_accounts WHERE LOWER(email) = LOWER(?) LIMIT 1",
+
+            (email.strip(),),
+
+        )
+
+        row = cursor.fetchone()
+
+        if not row:
+
+            return None
+
+        question = row["security_question"]
+
+        return question if question else None
+
+    finally:
+
+        conn.close()
+
+def reset_candidate_password(email, security_answer, new_password):
+
+    """Reset a password only when the saved security answer matches."""
+
+    if not email or not security_answer or not new_password:
+
+        return False
+
+    conn = get_connection()
+
+    try:
+
+        cursor = conn.cursor()
+
+        cursor.execute(
+
+            """SELECT id, security_answer_hash FROM candidate_accounts
+
+               WHERE LOWER(email) = LOWER(?) LIMIT 1""",
+
+            (email.strip(),),
+
+        )
+
+        account = cursor.fetchone()
+
+        if not account or not account["security_answer_hash"]:
+
+            return False
+
+        submitted_hash = _hash_password(security_answer.strip().casefold())
+
+        if not secrets.compare_digest(submitted_hash, account["security_answer_hash"]):
+
+            return False
+
+        cursor.execute(
+
+            "UPDATE candidate_accounts SET password_hash = ? WHERE id = ?",
+
+            (_hash_password(new_password), account["id"]),
+
+        )
+
+        conn.commit()
+
+        return cursor.rowcount > 0
+
+    except Exception:
+
+        conn.rollback()
+
+        raise
+
+    finally:
+
+        conn.close()

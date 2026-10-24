@@ -1,16 +1,23 @@
 # backend/candidate_evaluator.py
-
 from backend.resume_parser import (
     extract_text_from_pdf,
     clean_text,
-    extract_candidate_info
+    extract_candidate_info,
 )
-
 from backend.job_parser import parse_job_description
 from backend.matcher import match_candidate
 from backend.skill_extractor import extract_skills
-from backend.experience_extractor import extract_experience
-from backend.education_extractor import extract_education
+from backend.experience_extractor import (
+    extract_experience,
+    calculate_experience_score,
+)
+from backend.education_extractor import (
+    extract_education,
+    calculate_education_score,
+)
+from backend.verified_skill_evidence import (
+    build_verified_skill_evidence,
+)
 
 
 def evaluate_candidate(resume_path, job_description):

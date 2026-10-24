@@ -1,3 +1,14 @@
+import os
+import smtplib
+from email.message import EmailMessage
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+# Load the project's .env file before importing modules that read API keys.
+PROJECT_ROOT = Path(__file__).resolve().parent
+load_dotenv(dotenv_path=PROJECT_ROOT / ".env", override=False)
+
 import streamlit as st
 
 import pandas as pd
@@ -6,11 +17,14 @@ import json
 
 import re
 
-
-
 from datetime import date, time
 
-
+try:
+    from backend.recruitment_agent import screen_candidate_with_agent
+    AGENT_IMPORT_ERROR = None
+except Exception as agent_import_error:
+    screen_candidate_with_agent = None
+    AGENT_IMPORT_ERROR = str(agent_import_error)
 
 from backend.database import (
 
@@ -30,21 +44,16 @@ from backend.database import (
 
     create_interview,
 
-    get_interviews_for_application
+    get_interviews_for_application,
+    get_candidate
 
 )
-
-
-
-
 
 # ============================================================
 
 # PAGE CONFIGURATION
 
 # ============================================================
-
-
 
 st.set_page_config(
 
@@ -56,21 +65,13 @@ st.set_page_config(
 
 )
 
-
-
-
-
 # ============================================================
 
 # HEADER
 
 # ============================================================
 
-
-
 st.title("🤖 Recruiter AI Agent")
-
-
 
 st.caption(
 
@@ -78,21 +79,13 @@ st.caption(
 
 )
 
-
-
-
-
 # ============================================================
 
 # SIDEBAR
 
 # ============================================================
 
-
-
 st.sidebar.title("Recruiter Portal")
-
-
 
 page = st.sidebar.radio(
 
@@ -104,23 +97,18 @@ page = st.sidebar.radio(
 
         "Create Job",
 
-        "Candidate Comparison"
+        "Candidate Comparison",
+        "Agentic AI Screening"
 
     ]
 
 )
-
-
-
-
 
 # ============================================================
 
 # HELPER FUNCTIONS
 
 # ============================================================
-
-
 
 def format_score(value):
 
@@ -131,10 +119,6 @@ def format_score(value):
     except Exception:
 
         return "0.00%"
-
-
-
-
 
 def normalize_skill(skill):
 
@@ -156,17 +140,11 @@ def normalize_skill(skill):
 
     )
 
-
-
-
-
 def skills_to_text(skills):
 
     if not skills:
 
         return "None"
-
-
 
     return ", ".join(
 
@@ -176,31 +154,19 @@ def skills_to_text(skills):
 
     )
 
-
-
-
-
 def safe_json(value, default=None):
-
-
 
     if default is None:
 
         default = []
 
-
-
     if value is None:
 
         return default
 
-
-
     if isinstance(value, (list, dict)):
 
         return value
-
-
 
     try:
 
@@ -210,29 +176,17 @@ def safe_json(value, default=None):
 
         return default
 
-
-
-
-
 def make_clickable_url(url):
-
-
 
     if not url:
 
         return None
-
-
 
     url = str(url).strip()
 
-
-
     if not url:
 
         return None
-
-
 
     if not url.startswith(
 
@@ -242,48 +196,73 @@ def make_clickable_url(url):
 
         url = "https://" + url
 
-
-
     return url
 
-
-
-
-
 def extract_resume_links(evaluation):
-    """Extract LinkedIn, GitHub, and other URLs from saved evaluation data."""
-    if not isinstance(evaluation, dict):
-        return {}
-    links = {}
-    for label, key in (("LinkedIn", "linkedin"), ("GitHub", "github")):
-        value = evaluation.get(key)
-        if isinstance(value, str) and value.strip():
-            url = make_clickable_url(value)
-            if url:
-                links[label] = url
-    text = json.dumps(evaluation, ensure_ascii=False)
-    patterns = {
-        "LinkedIn": r"(?:https?://)?(?:www\.)?linkedin\.com/[^\s\"'<>]+",
-        "GitHub": r"(?:https?://)?(?:www\.)?github\.com/[^\s\"'<>]+",
-    }
-    for label, pattern in patterns.items():
-        if label not in links:
-            match = re.search(pattern, text, re.IGNORECASE)
-            if match:
-                url = make_clickable_url(match.group(0).rstrip(".,);]}"))
-                if url:
-                    links[label] = url
-    urls = re.findall(r"https?://[^\s\"'<>]+", text, re.IGNORECASE)
-    other = []
-    for value in urls:
-        url = value.rstrip(".,);]}")
-        lower = url.lower()
-        if "linkedin.com" not in lower and "github.com" not in lower and url not in other:
-            other.append(url)
-    for index, url in enumerate(other[:5], start=1):
-        links[f"Website {index}"] = url
-    return links
 
+    """Extract LinkedIn, GitHub, and other URLs from saved evaluation data."""
+
+    if not isinstance(evaluation, dict):
+
+        return {}
+
+    links = {}
+
+    for label, key in (("LinkedIn", "linkedin"), ("GitHub", "github")):
+
+        value = evaluation.get(key)
+
+        if isinstance(value, str) and value.strip():
+
+            url = make_clickable_url(value)
+
+            if url:
+
+                links[label] = url
+
+    text = json.dumps(evaluation, ensure_ascii=False)
+
+    patterns = {
+
+        "LinkedIn": r"(?:https?://)?(?:www\.)?linkedin\.com/[^\s\"\'<>]+",
+
+        "GitHub": r"(?:https?://)?(?:www\.)?github\.com/[^\s\"\'<>]+",
+
+    }
+
+    for label, pattern in patterns.items():
+
+        if label not in links:
+
+            match = re.search(pattern, text, re.IGNORECASE)
+
+            if match:
+
+                url = make_clickable_url(match.group(0).rstrip(".,);]}"))
+
+                if url:
+
+                    links[label] = url
+
+    urls = re.findall(r"https?://[^\s\"\'<>]+", text, re.IGNORECASE)
+
+    other = []
+
+    for value in urls:
+
+        url = value.rstrip(".,);]}")
+
+        lower = url.lower()
+
+        if "linkedin.com" not in lower and "github.com" not in lower and url not in other:
+
+            other.append(url)
+
+    for index, url in enumerate(other[:5], start=1):
+
+        links[f"Website {index}"] = url
+
+    return links
 
 # ============================================================
 
@@ -291,15 +270,9 @@ def extract_resume_links(evaluation):
 
 # ============================================================
 
-
-
 if page == "Create Job":
 
-
-
     st.header("Create New Job")
-
-
 
     title = st.text_input(
 
@@ -308,8 +281,6 @@ if page == "Create Job":
         placeholder="React Frontend Developer"
 
     )
-
-
 
     description = st.text_area(
 
@@ -327,11 +298,7 @@ if page == "Create Job":
 
     )
 
-
-
     st.subheader("Screening Criteria")
-
-
 
     minimum_score = st.slider(
 
@@ -346,8 +313,6 @@ if page == "Create Job":
         step=5
 
     )
-
-
 
     required_text = st.text_area(
 
@@ -371,8 +336,6 @@ if page == "Create Job":
 
     )
 
-
-
     preferred_text = st.text_area(
 
         "Preferred Skills",
@@ -391,8 +354,6 @@ if page == "Create Job":
 
     )
 
-
-
     if st.button(
 
         "Create Job",
@@ -401,11 +362,7 @@ if page == "Create Job":
 
     ):
 
-
-
         if not title.strip():
-
-
 
             st.error(
 
@@ -413,11 +370,7 @@ if page == "Create Job":
 
             )
 
-
-
         elif not description.strip():
-
-
 
             st.error(
 
@@ -425,11 +378,7 @@ if page == "Create Job":
 
             )
 
-
-
         else:
-
-
 
             required_skills = [
 
@@ -441,8 +390,6 @@ if page == "Create Job":
 
             ]
 
-
-
             preferred_skills = [
 
                 skill.strip()
@@ -452,8 +399,6 @@ if page == "Create Job":
                 if skill.strip()
 
             ]
-
-
 
             job_id = create_job(
 
@@ -469,17 +414,11 @@ if page == "Create Job":
 
             )
 
-
-
             st.success(
 
                 f"Job created successfully! Job ID: {job_id}"
 
             )
-
-
-
-
 
 # ============================================================
 
@@ -487,23 +426,13 @@ if page == "Create Job":
 
 # ============================================================
 
-
-
 elif page == "Dashboard":
-
-
 
     st.header("Recruiter Dashboard")
 
-
-
     jobs = get_jobs()
 
-
-
     if not jobs:
-
-
 
         st.info(
 
@@ -513,11 +442,7 @@ elif page == "Dashboard":
 
         )
 
-
-
         st.stop()
-
-
 
     job_options = {
 
@@ -529,8 +454,6 @@ elif page == "Dashboard":
 
     }
 
-
-
     selected_job_label = st.selectbox(
 
         "Select Job",
@@ -539,15 +462,11 @@ elif page == "Dashboard":
 
     )
 
-
-
     selected_job_id = job_options[
 
         selected_job_label
 
     ]
-
-
 
     job = get_job(
 
@@ -555,11 +474,7 @@ elif page == "Dashboard":
 
     )
 
-
-
     if not job:
-
-
 
         st.error(
 
@@ -567,13 +482,7 @@ elif page == "Dashboard":
 
         )
 
-
-
         st.stop()
-
-
-
-
 
     # ========================================================
 
@@ -581,15 +490,11 @@ elif page == "Dashboard":
 
     # ========================================================
 
-
-
     st.subheader(
 
         f"📋 {job['title']}"
 
     )
-
-
 
     with st.expander(
 
@@ -599,17 +504,11 @@ elif page == "Dashboard":
 
     ):
 
-
-
         st.write(
 
             job["description"]
 
         )
-
-
-
-
 
     # ========================================================
 
@@ -617,23 +516,15 @@ elif page == "Dashboard":
 
     # ========================================================
 
-
-
     st.subheader(
 
         "⚙️ Screening Criteria"
 
     )
 
-
-
     criteria_col1, criteria_col2 = st.columns(2)
 
-
-
     with criteria_col1:
-
-
 
         st.write(
 
@@ -643,23 +534,15 @@ elif page == "Dashboard":
 
         )
 
-
-
         st.write(
 
             "**Required Skills:**"
 
         )
 
-
-
         if job["required_skills"]:
 
-
-
             for skill in job["required_skills"]:
-
-
 
                 st.write(
 
@@ -667,21 +550,11 @@ elif page == "Dashboard":
 
                 )
 
-
-
         else:
-
-
 
             st.write("None")
 
-
-
-
-
     with criteria_col2:
-
-
 
         st.write(
 
@@ -689,15 +562,9 @@ elif page == "Dashboard":
 
         )
 
-
-
         if job["preferred_skills"]:
 
-
-
             for skill in job["preferred_skills"]:
-
-
 
                 st.write(
 
@@ -705,17 +572,9 @@ elif page == "Dashboard":
 
                 )
 
-
-
         else:
 
-
-
             st.write("None")
-
-
-
-
 
     # ========================================================
 
@@ -723,15 +582,11 @@ elif page == "Dashboard":
 
     # ========================================================
 
-
-
     with st.expander(
 
         "Edit Screening Criteria"
 
     ):
-
-
 
         new_minimum_score = st.slider(
 
@@ -753,8 +608,6 @@ elif page == "Dashboard":
 
         )
 
-
-
         new_required_text = st.text_area(
 
             "Required Skills — one per line",
@@ -768,8 +621,6 @@ elif page == "Dashboard":
             key=f"required_{job['id']}"
 
         )
-
-
 
         new_preferred_text = st.text_area(
 
@@ -785,8 +636,6 @@ elif page == "Dashboard":
 
         )
 
-
-
         if st.button(
 
             "Save Screening Criteria",
@@ -794,8 +643,6 @@ elif page == "Dashboard":
             key=f"save_criteria_{job['id']}"
 
         ):
-
-
 
             new_required = [
 
@@ -807,8 +654,6 @@ elif page == "Dashboard":
 
             ]
 
-
-
             new_preferred = [
 
                 skill.strip()
@@ -818,8 +663,6 @@ elif page == "Dashboard":
                 if skill.strip()
 
             ]
-
-
 
             update_job_criteria(
 
@@ -833,21 +676,13 @@ elif page == "Dashboard":
 
             )
 
-
-
             st.success(
 
                 "Screening criteria updated."
 
             )
 
-
-
             st.rerun()
-
-
-
-
 
     # ========================================================
 
@@ -855,15 +690,11 @@ elif page == "Dashboard":
 
     # ========================================================
 
-
-
     applications = get_applications_for_job(
 
         job["id"]
 
     )
-
-
 
     st.subheader(
 
@@ -871,11 +702,7 @@ elif page == "Dashboard":
 
     )
 
-
-
     if not applications:
-
-
 
         st.info(
 
@@ -883,13 +710,7 @@ elif page == "Dashboard":
 
         )
 
-
-
         st.stop()
-
-
-
-
 
     # ========================================================
 
@@ -897,11 +718,7 @@ elif page == "Dashboard":
 
     # ========================================================
 
-
-
     total = len(applications)
-
-
 
     shortlisted = sum(
 
@@ -913,8 +730,6 @@ elif page == "Dashboard":
 
     )
 
-
-
     under_review = sum(
 
         1
@@ -924,8 +739,6 @@ elif page == "Dashboard":
         if app["status"] == "Under Review"
 
     )
-
-
 
     not_eligible = sum(
 
@@ -937,11 +750,7 @@ elif page == "Dashboard":
 
     )
 
-
-
     col1, col2, col3, col4 = st.columns(4)
-
-
 
     col1.metric(
 
@@ -951,8 +760,6 @@ elif page == "Dashboard":
 
     )
 
-
-
     col2.metric(
 
         "Shortlisted",
@@ -960,8 +767,6 @@ elif page == "Dashboard":
         shortlisted
 
     )
-
-
 
     col3.metric(
 
@@ -971,8 +776,6 @@ elif page == "Dashboard":
 
     )
 
-
-
     col4.metric(
 
         "Not Eligible",
@@ -981,17 +784,11 @@ elif page == "Dashboard":
 
     )
 
-
-
-
-
     # ========================================================
 
     # FILTERS
 
     # ========================================================
-
-
 
     st.subheader(
 
@@ -999,15 +796,9 @@ elif page == "Dashboard":
 
     )
 
-
-
     filter_col1, filter_col2, filter_col3 = st.columns(3)
 
-
-
     with filter_col1:
-
-
 
         status_filter = st.selectbox(
 
@@ -1027,11 +818,7 @@ elif page == "Dashboard":
 
         )
 
-
-
     with filter_col2:
-
-
 
         minimum_filter = st.slider(
 
@@ -1047,11 +834,7 @@ elif page == "Dashboard":
 
         )
 
-
-
     with filter_col3:
-
-
 
         sort_option = st.selectbox(
 
@@ -1073,17 +856,9 @@ elif page == "Dashboard":
 
         )
 
-
-
-
-
     filtered = applications.copy()
 
-
-
     if status_filter != "All":
-
-
 
         filtered = [
 
@@ -1094,8 +869,6 @@ elif page == "Dashboard":
             if app["status"] == status_filter
 
         ]
-
-
 
     filtered = [
 
@@ -1117,37 +890,23 @@ elif page == "Dashboard":
 
     ]
 
-
-
-
-
     sort_mapping = {
-
-
 
         "Overall Score":
 
             "final_candidate_score",
 
-
-
         "Required Skills":
 
             "required_skill_score",
-
-
 
         "Experience":
 
             "experience_score",
 
-
-
         "Education":
 
             "education_score",
-
-
 
         "Evidence":
 
@@ -1155,15 +914,11 @@ elif page == "Dashboard":
 
     }
 
-
-
     sort_key = sort_mapping[
 
         sort_option
 
     ]
-
-
 
     filtered.sort(
 
@@ -1183,17 +938,11 @@ elif page == "Dashboard":
 
     )
 
-
-
-
-
     # ========================================================
 
     # RANKING TABLE
 
     # ========================================================
-
-
 
     st.subheader(
 
@@ -1201,11 +950,7 @@ elif page == "Dashboard":
 
     )
 
-
-
     if not filtered:
-
-
 
         st.warning(
 
@@ -1213,15 +958,9 @@ elif page == "Dashboard":
 
         )
 
-
-
     else:
 
-
-
         table_data = []
-
-
 
         for rank, candidate in enumerate(
 
@@ -1231,29 +970,19 @@ elif page == "Dashboard":
 
         ):
 
-
-
             table_data.append({
-
-
 
                 "Rank":
 
                     rank,
 
-
-
                 "Candidate":
 
                     candidate["name"],
 
-
-
                 "Application ID":
 
                     candidate["application_id"],
-
-
 
                 "Overall Score":
 
@@ -1267,8 +996,6 @@ elif page == "Dashboard":
 
                     ),
 
-
-
                 "Required Skills":
 
                     format_score(
@@ -1280,8 +1007,6 @@ elif page == "Dashboard":
                         ]
 
                     ),
-
-
 
                 "Preferred Skills":
 
@@ -1295,8 +1020,6 @@ elif page == "Dashboard":
 
                     ),
 
-
-
                 "Experience":
 
                     format_score(
@@ -1308,8 +1031,6 @@ elif page == "Dashboard":
                         ]
 
                     ),
-
-
 
                 "Education":
 
@@ -1323,8 +1044,6 @@ elif page == "Dashboard":
 
                     ),
 
-
-
                 "Evidence":
 
                     format_score(
@@ -1337,15 +1056,11 @@ elif page == "Dashboard":
 
                     ),
 
-
-
                 "Status":
 
                     candidate["status"]
 
             })
-
-
 
         df = pd.DataFrame(
 
@@ -1353,21 +1068,15 @@ elif page == "Dashboard":
 
         )
 
-
-
         st.dataframe(
 
             df,
 
-            use_container_width=True,
+            width="stretch",
 
             hide_index=True
 
         )
-
-
-
-
 
     # ========================================================
 
@@ -1375,11 +1084,7 @@ elif page == "Dashboard":
 
     # ========================================================
 
-
-
     if filtered:
-
-
 
         st.subheader(
 
@@ -1387,11 +1092,7 @@ elif page == "Dashboard":
 
         )
 
-
-
         chart_data = pd.DataFrame({
-
-
 
             "Candidate": [
 
@@ -1404,8 +1105,6 @@ elif page == "Dashboard":
                 in enumerate(filtered)
 
             ],
-
-
 
             "Score": [
 
@@ -1427,15 +1126,11 @@ elif page == "Dashboard":
 
         })
 
-
-
         chart_data = chart_data.set_index(
 
             "Candidate"
 
         )
-
-
 
         st.bar_chart(
 
@@ -1443,17 +1138,11 @@ elif page == "Dashboard":
 
         )
 
-
-
-
-
     # ========================================================
 
     # CANDIDATE DETAILS
 
     # ========================================================
-
-
 
     st.subheader(
 
@@ -1461,11 +1150,7 @@ elif page == "Dashboard":
 
     )
 
-
-
     candidate_options = {
-
-
 
         f"{candidate['name']} "
 
@@ -1473,17 +1158,11 @@ elif page == "Dashboard":
 
         candidate["application_id"]
 
-
-
         for candidate in filtered
 
     }
 
-
-
     if candidate_options:
-
-
 
         selected_candidate_label = st.selectbox(
 
@@ -1493,15 +1172,11 @@ elif page == "Dashboard":
 
         )
 
-
-
         selected_application_id = candidate_options[
 
             selected_candidate_label
 
         ]
-
-
 
         candidate = get_application(
 
@@ -1509,11 +1184,7 @@ elif page == "Dashboard":
 
         )
 
-
-
         if candidate:
-
-
 
             st.markdown(
 
@@ -1521,15 +1192,9 @@ elif page == "Dashboard":
 
             )
 
-
-
             info_col1, info_col2, info_col3 = st.columns(3)
 
-
-
             with info_col1:
-
-
 
                 st.write(
 
@@ -1539,11 +1204,7 @@ elif page == "Dashboard":
 
                 )
 
-
-
             with info_col2:
-
-
 
                 st.write(
 
@@ -1553,11 +1214,7 @@ elif page == "Dashboard":
 
                 )
 
-
-
             with info_col3:
-
-
 
                 st.write(
 
@@ -1567,17 +1224,11 @@ elif page == "Dashboard":
 
                 )
 
-
-
-
-
             # =================================================
 
             # SCORE BREAKDOWN
 
             # =================================================
-
-
 
             st.subheader(
 
@@ -1585,11 +1236,7 @@ elif page == "Dashboard":
 
             )
 
-
-
             score_data = {
-
-
 
                 "Required Skills":
 
@@ -1599,8 +1246,6 @@ elif page == "Dashboard":
 
                     ],
 
-
-
                 "Preferred Skills":
 
                     candidate[
@@ -1608,8 +1253,6 @@ elif page == "Dashboard":
                         "preferred_skill_score"
 
                     ],
-
-
 
                 "Overall Skills":
 
@@ -1619,8 +1262,6 @@ elif page == "Dashboard":
 
                     ],
 
-
-
                 "Keyword":
 
                     candidate[
@@ -1628,8 +1269,6 @@ elif page == "Dashboard":
                         "keyword_score"
 
                     ],
-
-
 
                 "Evidence":
 
@@ -1639,8 +1278,6 @@ elif page == "Dashboard":
 
                     ],
 
-
-
                 "Hybrid Skills":
 
                     candidate[
@@ -1648,8 +1285,6 @@ elif page == "Dashboard":
                         "hybrid_skill_score"
 
                     ],
-
-
 
                 "Experience":
 
@@ -1659,8 +1294,6 @@ elif page == "Dashboard":
 
                     ],
 
-
-
                 "Education":
 
                     candidate[
@@ -1668,8 +1301,6 @@ elif page == "Dashboard":
                         "education_score"
 
                     ],
-
-
 
                 "Final Score":
 
@@ -1681,27 +1312,17 @@ elif page == "Dashboard":
 
             }
 
-
-
             score_df = pd.DataFrame({
-
-
 
                 "Metric":
 
                     list(score_data.keys()),
 
-
-
                 "Score":
 
                     list(score_data.values())
 
-
-
             })
-
-
 
             st.dataframe(
 
@@ -1713,33 +1334,21 @@ elif page == "Dashboard":
 
             )
 
-
-
-
-
             # =================================================
 
             # SKILLS
 
             # =================================================
 
-
-
             skills_col1, skills_col2 = st.columns(2)
 
-
-
             with skills_col1:
-
-
 
                 st.subheader(
 
                     "✅ Matched Skills"
 
                 )
-
-
 
                 matched = (
 
@@ -1759,15 +1368,9 @@ elif page == "Dashboard":
 
                 )
 
-
-
                 if matched:
 
-
-
                     for skill in matched:
-
-
 
                         st.write(
 
@@ -1775,11 +1378,7 @@ elif page == "Dashboard":
 
                         )
 
-
-
                 else:
-
-
 
                     st.write(
 
@@ -1787,21 +1386,13 @@ elif page == "Dashboard":
 
                     )
 
-
-
-
-
             with skills_col2:
-
-
 
                 st.subheader(
 
                     "❌ Missing Skills"
 
                 )
-
-
 
                 missing = (
 
@@ -1821,15 +1412,9 @@ elif page == "Dashboard":
 
                 )
 
-
-
                 if missing:
 
-
-
                     for skill in missing:
-
-
 
                         st.write(
 
@@ -1837,11 +1422,7 @@ elif page == "Dashboard":
 
                         )
 
-
-
                 else:
-
-
 
                     st.write(
 
@@ -1849,17 +1430,11 @@ elif page == "Dashboard":
 
                     )
 
-
-
-
-
             # =================================================
 
             # AI EVALUATION
 
             # =================================================
-
-
 
             st.subheader(
 
@@ -1867,27 +1442,19 @@ elif page == "Dashboard":
 
             )
 
-
-
             evaluation = candidate.get(
 
                 "evaluation_json"
 
             )
 
-
-
             if evaluation:
-
-
 
                 # -------------------------------------------------
 
                 # Candidate information
 
                 # -------------------------------------------------
-
-
 
                 candidate_name = evaluation.get(
 
@@ -1903,8 +1470,6 @@ elif page == "Dashboard":
 
                 )
 
-
-
                 candidate_email = evaluation.get(
 
                     "email",
@@ -1919,8 +1484,6 @@ elif page == "Dashboard":
 
                 )
 
-
-
                 candidate_phone = evaluation.get(
 
                     "phone",
@@ -1928,8 +1491,6 @@ elif page == "Dashboard":
                     ""
 
                 )
-
-
 
                 candidate_location = evaluation.get(
 
@@ -1939,17 +1500,11 @@ elif page == "Dashboard":
 
                 )
 
-
-
-
-
                 # -------------------------------------------------
 
                 # PROFESSIONAL LINKS
 
                 # -------------------------------------------------
-
-
 
                 resume_links = extract_resume_links(
 
@@ -1957,11 +1512,7 @@ elif page == "Dashboard":
 
                 )
 
-
-
                 if resume_links:
-
-
 
                     st.markdown(
 
@@ -1969,15 +1520,11 @@ elif page == "Dashboard":
 
                     )
 
-
-
                     link_columns = st.columns(
 
                         len(resume_links)
 
                     )
-
-
 
                     for column, (
 
@@ -1993,35 +1540,19 @@ elif page == "Dashboard":
 
                     ):
 
-
-
                         with column:
-
-
 
                             if label == "LinkedIn":
 
-
-
                                 icon = "🔗"
-
-
 
                             elif label == "GitHub":
 
-
-
                                 icon = "💻"
-
-
 
                             else:
 
-
-
                                 icon = "🌐"
-
-
 
                             st.link_button(
 
@@ -2033,17 +1564,11 @@ elif page == "Dashboard":
 
                             )
 
-
-
-
-
                 # -------------------------------------------------
 
                 # CANDIDATE PROFILE
 
                 # -------------------------------------------------
-
-
 
                 st.markdown(
 
@@ -2051,15 +1576,9 @@ elif page == "Dashboard":
 
                 )
 
-
-
                 profile_col1, profile_col2, profile_col3 = st.columns(3)
 
-
-
                 with profile_col1:
-
-
 
                     st.write(
 
@@ -2067,19 +1586,13 @@ elif page == "Dashboard":
 
                     )
 
-
-
                     st.write(
 
                         candidate_name
 
                     )
 
-
-
                 with profile_col2:
-
-
 
                     st.write(
 
@@ -2087,11 +1600,7 @@ elif page == "Dashboard":
 
                     )
 
-
-
                     if candidate_email:
-
-
 
                         st.markdown(
 
@@ -2101,11 +1610,7 @@ elif page == "Dashboard":
 
                         )
 
-
-
                     else:
-
-
 
                         st.write(
 
@@ -2113,11 +1618,7 @@ elif page == "Dashboard":
 
                         )
 
-
-
                 with profile_col3:
-
-
 
                     st.write(
 
@@ -2125,11 +1626,7 @@ elif page == "Dashboard":
 
                     )
 
-
-
                     if candidate_phone:
-
-
 
                         st.markdown(
 
@@ -2139,11 +1636,7 @@ elif page == "Dashboard":
 
                         )
 
-
-
                     else:
-
-
 
                         st.write(
 
@@ -2151,11 +1644,7 @@ elif page == "Dashboard":
 
                         )
 
-
-
                 if candidate_location:
-
-
 
                     st.write(
 
@@ -2165,17 +1654,11 @@ elif page == "Dashboard":
 
                     )
 
-
-
-
-
                 # -------------------------------------------------
 
                 # AI MATCH SUMMARY
 
                 # -------------------------------------------------
-
-
 
                 st.markdown(
 
@@ -2183,11 +1666,7 @@ elif page == "Dashboard":
 
                 )
 
-
-
                 summary_col1, summary_col2, summary_col3 = st.columns(3)
-
-
 
                 final_score = float(
 
@@ -2207,8 +1686,6 @@ elif page == "Dashboard":
 
                 )
 
-
-
                 required_score = float(
 
                     evaluation.get(
@@ -2226,8 +1703,6 @@ elif page == "Dashboard":
                     ) or 0
 
                 )
-
-
 
                 hybrid_score = float(
 
@@ -2247,11 +1722,7 @@ elif page == "Dashboard":
 
                 )
 
-
-
                 with summary_col1:
-
-
 
                     st.metric(
 
@@ -2261,11 +1732,7 @@ elif page == "Dashboard":
 
                     )
 
-
-
                 with summary_col2:
-
-
 
                     st.metric(
 
@@ -2275,11 +1742,7 @@ elif page == "Dashboard":
 
                     )
 
-
-
                 with summary_col3:
-
-
 
                     st.metric(
 
@@ -2289,25 +1752,17 @@ elif page == "Dashboard":
 
                     )
 
-
-
-
-
                 # -------------------------------------------------
 
                 # REQUIRED SKILL ANALYSIS
 
                 # -------------------------------------------------
 
-
-
                 st.markdown(
 
                     "#### 🛠️ Required Skill Analysis"
 
                 )
-
-
 
                 required_skills = safe_json(
 
@@ -2320,8 +1775,6 @@ elif page == "Dashboard":
                     []
 
                 )
-
-
 
                 matched_skills = safe_json(
 
@@ -2341,8 +1794,6 @@ elif page == "Dashboard":
 
                 )
 
-
-
                 missing_skills = safe_json(
 
                     evaluation.get(
@@ -2355,15 +1806,9 @@ elif page == "Dashboard":
 
                 )
 
-
-
                 skill_rows = []
 
-
-
                 for skill in required_skills:
-
-
 
                     normalized_skill = normalize_skill(
 
@@ -2371,11 +1816,7 @@ elif page == "Dashboard":
 
                     )
 
-
-
                     matched = any(
-
-
 
                         normalize_skill(
 
@@ -2383,21 +1824,13 @@ elif page == "Dashboard":
 
                         ) == normalized_skill
 
-
-
                         for matched_skill
 
                         in matched_skills
 
-
-
                     )
 
-
-
                     missing = any(
-
-
 
                         normalize_skill(
 
@@ -2405,25 +1838,15 @@ elif page == "Dashboard":
 
                         ) == normalized_skill
 
-
-
                         for missing_skill
 
                         in missing_skills
 
-
-
                     )
-
-
 
                     if matched:
 
-
-
                         status = "✅ Matched"
-
-
 
                         explanation = (
 
@@ -2431,15 +1854,9 @@ elif page == "Dashboard":
 
                         )
 
-
-
                     elif missing:
 
-
-
                         status = "❌ Missing"
-
-
 
                         explanation = (
 
@@ -2447,15 +1864,9 @@ elif page == "Dashboard":
 
                         )
 
-
-
                     else:
 
-
-
                         status = "⚠️ Unverified"
-
-
 
                         explanation = (
 
@@ -2463,45 +1874,29 @@ elif page == "Dashboard":
 
                         )
 
-
-
                     skill_rows.append({
-
-
 
                         "Required Skill":
 
                             skill,
 
-
-
                         "Status":
 
                             status,
-
-
 
                         "AI Assessment":
 
                             explanation
 
-
-
                     })
 
-
-
                 if skill_rows:
-
-
 
                     skill_df = pd.DataFrame(
 
                         skill_rows
 
                     )
-
-
 
                     st.dataframe(
 
@@ -2513,11 +1908,7 @@ elif page == "Dashboard":
 
                     )
 
-
-
                 else:
-
-
 
                     st.info(
 
@@ -2525,25 +1916,15 @@ elif page == "Dashboard":
 
                     )
 
-
-
-
-
                 # -------------------------------------------------
 
                 # MATCHED / MISSING SKILLS
 
                 # -------------------------------------------------
 
-
-
                 skill_col1, skill_col2 = st.columns(2)
 
-
-
                 with skill_col1:
-
-
 
                     st.markdown(
 
@@ -2551,15 +1932,9 @@ elif page == "Dashboard":
 
                     )
 
-
-
                     if matched_skills:
 
-
-
                         for skill in matched_skills:
-
-
 
                             st.success(
 
@@ -2567,11 +1942,7 @@ elif page == "Dashboard":
 
                             )
 
-
-
                     else:
-
-
 
                         st.info(
 
@@ -2579,13 +1950,7 @@ elif page == "Dashboard":
 
                         )
 
-
-
-
-
                 with skill_col2:
-
-
 
                     st.markdown(
 
@@ -2593,15 +1958,9 @@ elif page == "Dashboard":
 
                     )
 
-
-
                     if missing_skills:
 
-
-
                         for skill in missing_skills:
-
-
 
                             st.error(
 
@@ -2609,11 +1968,7 @@ elif page == "Dashboard":
 
                             )
 
-
-
                     else:
-
-
 
                         st.success(
 
@@ -2621,17 +1976,11 @@ elif page == "Dashboard":
 
                         )
 
-
-
-
-
                 # -------------------------------------------------
 
                 # EXPERIENCE & EDUCATION
 
                 # -------------------------------------------------
-
-
 
                 st.markdown(
 
@@ -2639,11 +1988,7 @@ elif page == "Dashboard":
 
                 )
 
-
-
                 exp_col1, exp_col2, exp_col3 = st.columns(3)
-
-
 
                 experience = evaluation.get(
 
@@ -2652,8 +1997,6 @@ elif page == "Dashboard":
                     0
 
                 )
-
-
 
                 experience_score = float(
 
@@ -2673,8 +2016,6 @@ elif page == "Dashboard":
 
                 )
 
-
-
                 education_score = float(
 
                     evaluation.get(
@@ -2693,11 +2034,7 @@ elif page == "Dashboard":
 
                 )
 
-
-
                 with exp_col1:
-
-
 
                     st.metric(
 
@@ -2707,11 +2044,7 @@ elif page == "Dashboard":
 
                     )
 
-
-
                 with exp_col2:
-
-
 
                     st.metric(
 
@@ -2721,11 +2054,7 @@ elif page == "Dashboard":
 
                     )
 
-
-
                 with exp_col3:
-
-
 
                     st.metric(
 
@@ -2735,25 +2064,17 @@ elif page == "Dashboard":
 
                     )
 
-
-
-
-
                 # -------------------------------------------------
 
                 # AI VERIFIED EVIDENCE
 
                 # -------------------------------------------------
 
-
-
                 st.markdown(
 
                     "#### 🔎 AI Verified Evidence"
 
                 )
-
-
 
                 evidence = safe_json(
 
@@ -2767,8 +2088,6 @@ elif page == "Dashboard":
 
                 )
 
-
-
                 if isinstance(
 
                     evidence,
@@ -2777,23 +2096,15 @@ elif page == "Dashboard":
 
                 ):
 
-
-
                     evidence = list(
 
                         evidence.values()
 
                     )
 
-
-
                 if evidence:
 
-
-
                     for item in evidence:
-
-
 
                         if not isinstance(
 
@@ -2805,8 +2116,6 @@ elif page == "Dashboard":
 
                             continue
 
-
-
                         skill = item.get(
 
                             "skill",
@@ -2815,8 +2124,6 @@ elif page == "Dashboard":
 
                         )
 
-
-
                         verified = item.get(
 
                             "verified",
@@ -2824,8 +2131,6 @@ elif page == "Dashboard":
                             False
 
                         )
-
-
 
                         evidence_data = (
 
@@ -2837,8 +2142,6 @@ elif page == "Dashboard":
 
                         )
 
-
-
                         section = evidence_data.get(
 
                             "section",
@@ -2846,8 +2149,6 @@ elif page == "Dashboard":
                             "Resume"
 
                         )
-
-
 
                         confidence = float(
 
@@ -2861,8 +2162,6 @@ elif page == "Dashboard":
 
                         )
 
-
-
                         evidence_text = (
 
                             evidence_data.get(
@@ -2875,23 +2174,13 @@ elif page == "Dashboard":
 
                         )
 
-
-
                         if verified:
-
-
 
                             status = "✅ Verified"
 
-
-
                         else:
 
-
-
                             status = "❌ Not Verified"
-
-
 
                         with st.expander(
 
@@ -2903,8 +2192,6 @@ elif page == "Dashboard":
 
                         ):
 
-
-
                             st.write(
 
                                 f"**Resume Section:** "
@@ -2913,11 +2200,7 @@ elif page == "Dashboard":
 
                             )
 
-
-
                             if evidence_text:
-
-
 
                                 st.write(
 
@@ -2925,19 +2208,13 @@ elif page == "Dashboard":
 
                                 )
 
-
-
                                 st.info(
 
                                     evidence_text
 
                                 )
 
-
-
                             else:
-
-
 
                                 st.write(
 
@@ -2945,11 +2222,7 @@ elif page == "Dashboard":
 
                                 )
 
-
-
                 else:
-
-
 
                     st.info(
 
@@ -2957,17 +2230,11 @@ elif page == "Dashboard":
 
                     )
 
-
-
-
-
                 # -------------------------------------------------
 
                 # DETAILED AI SCORES
 
                 # -------------------------------------------------
-
-
 
                 st.markdown(
 
@@ -2975,11 +2242,7 @@ elif page == "Dashboard":
 
                 )
 
-
-
                 detailed_scores = {
-
-
 
                     "Required Skill Score":
 
@@ -2997,8 +2260,6 @@ elif page == "Dashboard":
 
                         ),
 
-
-
                     "Preferred Skill Score":
 
                         evaluation.get(
@@ -3015,8 +2276,6 @@ elif page == "Dashboard":
 
                         ),
 
-
-
                     "Overall Skill Score":
 
                         evaluation.get(
@@ -3032,8 +2291,6 @@ elif page == "Dashboard":
                             )
 
                         ),
-
-
 
                     "Keyword Score":
 
@@ -3057,8 +2314,6 @@ elif page == "Dashboard":
 
                         ),
 
-
-
                     "Semantic Evidence":
 
                         evaluation.get(
@@ -3074,8 +2329,6 @@ elif page == "Dashboard":
                             )
 
                         ),
-
-
 
                     "Hybrid Skill Score":
 
@@ -3093,8 +2346,6 @@ elif page == "Dashboard":
 
                         ),
 
-
-
                     "Experience Score":
 
                         evaluation.get(
@@ -3111,8 +2362,6 @@ elif page == "Dashboard":
 
                         ),
 
-
-
                     "Education Score":
 
                         evaluation.get(
@@ -3128,8 +2377,6 @@ elif page == "Dashboard":
                             )
 
                         ),
-
-
 
                     "Final Score":
 
@@ -3149,19 +2396,11 @@ elif page == "Dashboard":
 
                 }
 
-
-
                 score_table = []
-
-
 
                 for metric, value in detailed_scores.items():
 
-
-
                     try:
-
-
 
                         numeric_value = float(
 
@@ -3169,35 +2408,21 @@ elif page == "Dashboard":
 
                         )
 
-
-
                     except Exception:
-
-
 
                         numeric_value = 0
 
-
-
                     score_table.append({
-
-
 
                         "AI Metric":
 
                             metric,
 
-
-
                         "Score":
 
                             f"{numeric_value:.2f}%"
 
-
-
                     })
-
-
 
                 st.dataframe(
 
@@ -3213,17 +2438,11 @@ elif page == "Dashboard":
 
                 )
 
-
-
-
-
                 # -------------------------------------------------
 
                 # RAW JSON - DEVELOPER ONLY
 
                 # -------------------------------------------------
-
-
 
                 with st.expander(
 
@@ -3231,19 +2450,13 @@ elif page == "Dashboard":
 
                 ):
 
-
-
                     st.json(
 
                         evaluation
 
                     )
 
-
-
             else:
-
-
 
                 st.info(
 
@@ -3251,25 +2464,17 @@ elif page == "Dashboard":
 
                 )
 
-
-
-
-
             # =================================================
 
             # MANUAL STATUS
 
             # =================================================
 
-
-
             st.subheader(
 
                 "Recruiter Decision"
 
             )
-
-
 
             status_options = [
 
@@ -3287,15 +2492,9 @@ elif page == "Dashboard":
 
             ]
 
-
-
             current_status = candidate["status"]
 
-
-
             if current_status in status_options:
-
-
 
                 current_index = (
 
@@ -3307,39 +2506,21 @@ elif page == "Dashboard":
 
                 )
 
-
-
             else:
-
-
 
                 current_index = 1
 
-
-
             new_status = st.selectbox(
-
-
 
                 "Update Candidate Status",
 
-
-
                 status_options,
-
-
 
                 index=current_index,
 
-
-
                 key=f"status_select_{candidate['id']}"
 
-
-
             )
-
-
 
             if st.button(
 
@@ -3349,8 +2530,6 @@ elif page == "Dashboard":
 
             ):
 
-
-
                 update_application_status(
 
                     candidate["id"],
@@ -3359,21 +2538,13 @@ elif page == "Dashboard":
 
                 )
 
-
-
                 st.success(
 
                     "Candidate status updated."
 
                 )
 
-
-
                 st.rerun()
-
-
-
-
 
             # =================================================
 
@@ -3381,11 +2552,7 @@ elif page == "Dashboard":
 
             # =================================================
 
-
-
             st.divider()
-
-
 
             st.subheader(
 
@@ -3393,15 +2560,11 @@ elif page == "Dashboard":
 
             )
 
-
-
             with st.form(
 
                 f"schedule_interview_{candidate['id']}"
 
             ):
-
-
 
                 interview_date = st.date_input(
 
@@ -3413,8 +2576,6 @@ elif page == "Dashboard":
 
                 )
 
-
-
                 interview_time = st.time_input(
 
                     "Interview Time",
@@ -3422,8 +2583,6 @@ elif page == "Dashboard":
                     value=time(10, 0)
 
                 )
-
-
 
                 interview_type = st.selectbox(
 
@@ -3443,8 +2602,6 @@ elif page == "Dashboard":
 
                 )
 
-
-
                 interviewer = st.text_input(
 
                     "Interviewer Name",
@@ -3452,8 +2609,6 @@ elif page == "Dashboard":
                     placeholder="Enter interviewer name"
 
                 )
-
-
 
                 meeting_link = st.text_input(
 
@@ -3466,8 +2621,6 @@ elif page == "Dashboard":
                     )
 
                 )
-
-
 
                 notes = st.text_area(
 
@@ -3483,8 +2636,6 @@ elif page == "Dashboard":
 
                 )
 
-
-
                 schedule_button = st.form_submit_button(
 
                     "📅 Schedule Interview",
@@ -3493,15 +2644,9 @@ elif page == "Dashboard":
 
                 )
 
-
-
                 if schedule_button:
 
-
-
                     if not interviewer.strip():
-
-
 
                         st.error(
 
@@ -3509,59 +2654,39 @@ elif page == "Dashboard":
 
                         )
 
-
-
                     else:
 
-
-
                         interview_id = create_interview(
-
-
 
                             application_id=
 
                                 candidate["id"],
 
-
-
                             interview_date=
 
                                 str(interview_date),
-
-
 
                             interview_time=
 
                                 str(interview_time),
 
-
-
                             interview_type=
 
                                 interview_type,
-
-
 
                             interviewer=
 
                                 interviewer.strip(),
 
-
-
                             meeting_link=
 
                                 meeting_link.strip(),
-
-
 
                             notes=
 
                                 notes.strip()
 
                         )
-
-
 
                         update_application_status(
 
@@ -3571,15 +2696,11 @@ elif page == "Dashboard":
 
                         )
 
-
-
                         st.success(
 
                             "Interview scheduled successfully!"
 
                         )
-
-
 
                         st.info(
 
@@ -3587,13 +2708,7 @@ elif page == "Dashboard":
 
                         )
 
-
-
                         st.rerun()
-
-
-
-
 
             # =================================================
 
@@ -3601,15 +2716,11 @@ elif page == "Dashboard":
 
             # =================================================
 
-
-
             st.subheader(
 
                 "📋 Scheduled Interviews"
 
             )
-
-
 
             interviews = get_interviews_for_application(
 
@@ -3617,11 +2728,7 @@ elif page == "Dashboard":
 
             )
 
-
-
             if not interviews:
-
-
 
                 st.info(
 
@@ -3629,19 +2736,11 @@ elif page == "Dashboard":
 
                 )
 
-
-
             else:
-
-
 
                 for interview in interviews:
 
-
-
                     with st.container():
-
-
 
                         st.markdown(
 
@@ -3649,19 +2748,11 @@ elif page == "Dashboard":
 
                             ### {interview['interview_type']} Interview
 
-
-
                             **Date:** {interview['interview_date']}
-
-
 
                             **Time:** {interview['interview_time']}
 
-
-
                             **Interviewer:** {interview['interviewer']}
-
-
 
                             **Status:** {interview['status']}
 
@@ -3669,15 +2760,11 @@ elif page == "Dashboard":
 
                         )
 
-
-
                         if interview[
 
                             "meeting_link"
 
                         ]:
-
-
 
                             meeting_url = (
 
@@ -3688,8 +2775,6 @@ elif page == "Dashboard":
                                 ]
 
                             )
-
-
 
                             if not meeting_url.startswith(
 
@@ -3703,8 +2788,6 @@ elif page == "Dashboard":
 
                             ):
 
-
-
                                 meeting_url = (
 
                                     "https://"
@@ -3712,8 +2795,6 @@ elif page == "Dashboard":
                                     + meeting_url
 
                                 )
-
-
 
                             st.link_button(
 
@@ -3723,11 +2804,7 @@ elif page == "Dashboard":
 
                             )
 
-
-
                         if interview["notes"]:
-
-
 
                             st.write(
 
@@ -3737,13 +2814,7 @@ elif page == "Dashboard":
 
                             )
 
-
-
                         st.divider()
-
-
-
-
 
 # ============================================================
 
@@ -3751,11 +2822,7 @@ elif page == "Dashboard":
 
 # ============================================================
 
-
-
 elif page == "Candidate Comparison":
-
-
 
     st.header(
 
@@ -3763,15 +2830,9 @@ elif page == "Candidate Comparison":
 
     )
 
-
-
     jobs = get_jobs()
 
-
-
     if not jobs:
-
-
 
         st.info(
 
@@ -3779,15 +2840,9 @@ elif page == "Candidate Comparison":
 
         )
 
-
-
         st.stop()
 
-
-
     job_options = {
-
-
 
         f"{job['title']} "
 
@@ -3795,15 +2850,9 @@ elif page == "Candidate Comparison":
 
         job["id"]
 
-
-
         for job in jobs
 
-
-
     }
-
-
 
     selected_job_label = st.selectbox(
 
@@ -3813,15 +2862,11 @@ elif page == "Candidate Comparison":
 
     )
 
-
-
     selected_job_id = job_options[
 
         selected_job_label
 
     ]
-
-
 
     applications = get_applications_for_job(
 
@@ -3829,11 +2874,7 @@ elif page == "Candidate Comparison":
 
     )
 
-
-
     if not applications:
-
-
 
         st.info(
 
@@ -3841,15 +2882,9 @@ elif page == "Candidate Comparison":
 
         )
 
-
-
         st.stop()
 
-
-
     candidate_options = {
-
-
 
         f"{candidate['name']} "
 
@@ -3857,15 +2892,9 @@ elif page == "Candidate Comparison":
 
         candidate["application_id"]
 
-
-
         for candidate in applications
 
-
-
     }
-
-
 
     selected_labels = st.multiselect(
 
@@ -3877,11 +2906,7 @@ elif page == "Candidate Comparison":
 
     )
 
-
-
     if len(selected_labels) < 2:
-
-
 
         st.info(
 
@@ -3889,45 +2914,25 @@ elif page == "Candidate Comparison":
 
         )
 
-
-
     else:
-
-
 
         selected_ids = [
 
-
-
             candidate_options[label]
-
-
 
             for label in selected_labels
 
-
-
         ]
-
-
 
         selected_candidates = [
 
-
-
             get_application(application_id)
-
-
 
             for application_id
 
             in selected_ids
 
-
-
         ]
-
-
 
         st.subheader(
 
@@ -3935,15 +2940,9 @@ elif page == "Candidate Comparison":
 
         )
 
-
-
         comparison = {}
 
-
-
         for candidate in selected_candidates:
-
-
 
             label = (
 
@@ -3953,11 +2952,7 @@ elif page == "Candidate Comparison":
 
             )
 
-
-
             comparison[label] = {
-
-
 
                 "Overall Score":
 
@@ -3967,8 +2962,6 @@ elif page == "Candidate Comparison":
 
                     ],
 
-
-
                 "Required Skills":
 
                     candidate[
@@ -3976,8 +2969,6 @@ elif page == "Candidate Comparison":
                         "required_skill_score"
 
                     ],
-
-
 
                 "Preferred Skills":
 
@@ -3987,8 +2978,6 @@ elif page == "Candidate Comparison":
 
                     ],
 
-
-
                 "Experience":
 
                     candidate[
@@ -3997,8 +2986,6 @@ elif page == "Candidate Comparison":
 
                     ],
 
-
-
                 "Education":
 
                     candidate[
@@ -4006,8 +2993,6 @@ elif page == "Candidate Comparison":
                         "education_score"
 
                     ],
-
-
 
                 "Evidence":
 
@@ -4019,15 +3004,11 @@ elif page == "Candidate Comparison":
 
             }
 
-
-
         comparison_df = pd.DataFrame(
 
             comparison
 
         )
-
-
 
         st.dataframe(
 
@@ -4037,17 +3018,11 @@ elif page == "Candidate Comparison":
 
         )
 
-
-
-
-
         # ====================================================
 
         # SCORE COMPARISON
 
         # ====================================================
-
-
 
         st.subheader(
 
@@ -4055,15 +3030,9 @@ elif page == "Candidate Comparison":
 
         )
 
-
-
         chart_data = pd.DataFrame({
 
-
-
             candidate["name"]: {
-
-
 
                 "Overall Score":
 
@@ -4077,8 +3046,6 @@ elif page == "Candidate Comparison":
 
                     ),
 
-
-
                 "Required Skills":
 
                     float(
@@ -4090,8 +3057,6 @@ elif page == "Candidate Comparison":
                         ] or 0
 
                     ),
-
-
 
                 "Experience":
 
@@ -4105,8 +3070,6 @@ elif page == "Candidate Comparison":
 
                     ),
 
-
-
                 "Education":
 
                     float(
@@ -4118,8 +3081,6 @@ elif page == "Candidate Comparison":
                         ] or 0
 
                     ),
-
-
 
                 "Evidence":
 
@@ -4133,19 +3094,11 @@ elif page == "Candidate Comparison":
 
                     )
 
-
-
             }
-
-
 
             for candidate in selected_candidates
 
-
-
         })
-
-
 
         st.bar_chart(
 
@@ -4153,17 +3106,11 @@ elif page == "Candidate Comparison":
 
         )
 
-
-
-
-
         # ====================================================
 
         # CANDIDATE SKILLS
 
         # ====================================================
-
-
 
         st.subheader(
 
@@ -4171,19 +3118,13 @@ elif page == "Candidate Comparison":
 
         )
 
-
-
         for candidate in selected_candidates:
-
-
 
             st.markdown(
 
                 f"### {candidate['name']}"
 
             )
-
-
 
             matched = (
 
@@ -4203,8 +3144,6 @@ elif page == "Candidate Comparison":
 
             )
 
-
-
             missing = (
 
                 candidate.get(
@@ -4223,15 +3162,9 @@ elif page == "Candidate Comparison":
 
             )
 
-
-
             col1, col2 = st.columns(2)
 
-
-
             with col1:
-
-
 
                 st.write(
 
@@ -4239,11 +3172,7 @@ elif page == "Candidate Comparison":
 
                 )
 
-
-
                 for skill in matched:
-
-
 
                     st.write(
 
@@ -4251,11 +3180,7 @@ elif page == "Candidate Comparison":
 
                     )
 
-
-
             with col2:
-
-
 
                 st.write(
 
@@ -4263,11 +3188,7 @@ elif page == "Candidate Comparison":
 
                 )
 
-
-
                 for skill in missing:
-
-
 
                     st.write(
 
@@ -4275,6 +3196,328 @@ elif page == "Candidate Comparison":
 
                     )
 
-
-
             st.divider()
+
+# ============================================================
+# AGENTIC AI SCREENING
+# ============================================================
+
+elif page == "Agentic AI Screening":
+
+    st.header("🤖 Agentic AI Screening")
+    st.caption(
+        "Run your existing LangChain recruitment agent against candidates "
+        "for a selected job. Results are recommendations for recruiter review."
+    )
+
+    if screen_candidate_with_agent is None:
+        st.error("The recruitment agent could not be imported.")
+        st.code(AGENT_IMPORT_ERROR or "Unknown import error")
+        st.info(
+            "Check backend/recruitment_agent.py and its dependencies, "
+            "including LangChain, langchain-google-genai, and GOOGLE_API_KEY."
+        )
+        st.stop()
+
+    jobs = get_jobs()
+
+    if not jobs:
+        st.info("Create a job before running agentic screening.")
+        st.stop()
+
+    job_options = {
+        f"{job['title']} (ID: {job['id']})": job["id"]
+        for job in jobs
+    }
+    selected_job_label = st.selectbox(
+        "Select job to screen candidates for",
+        list(job_options.keys()),
+        key="agent_screen_job",
+    )
+    selected_job = get_job(job_options[selected_job_label])
+
+    if not selected_job:
+        st.error("Unable to load the selected job.")
+        st.stop()
+
+    applications = get_applications_for_job(selected_job["id"])
+
+    if not applications:
+        st.info("No candidates have applied for this job yet.")
+        st.stop()
+
+    app_options = {
+        f"{app.get('name', 'Candidate')} (Application #{app.get('application_id', app.get('id', '?'))})":
+            app.get("application_id", app.get("id"))
+        for app in applications
+    }
+
+    selected_candidate_labels = st.multiselect(
+        "Select candidates to evaluate",
+        list(app_options.keys()),
+        default=list(app_options.keys()),
+        key=f"agent_candidates_{selected_job['id']}",
+    )
+
+    st.warning(
+        "Agent screening may call the configured Gemini API and can take time. "
+        "It will not automatically change candidate statuses."
+    )
+
+    if st.button(
+        "Run Agentic Screening",
+        type="primary",
+        disabled=not selected_candidate_labels,
+        key=f"run_agent_screening_{selected_job['id']}",
+    ):
+        if not os.getenv("GOOGLE_API_KEY", "").strip():
+            st.error("GOOGLE_API_KEY is not configured in this terminal/environment.")
+        else:
+            results = []
+            progress = st.progress(0)
+            status_area = st.empty()
+            total_selected = len(selected_candidate_labels)
+
+            for index, label in enumerate(selected_candidate_labels, start=1):
+                application_id = app_options[label]
+                status_area.write(f"Screening {label} ({index}/{total_selected})…")
+
+                try:
+                    application = get_application(application_id)
+                    if not application:
+                        raise ValueError("Application record could not be loaded.")
+
+                    candidate_id = application.get("candidate_id")
+                    candidate_profile = (
+                        get_candidate(candidate_id) if candidate_id is not None else None
+                    )
+
+                    resume_path = (
+                        (candidate_profile or {}).get("resume_path")
+                        or application.get("resume_path")
+                        or application.get("candidate_resume_path")
+                    )
+
+                    if not resume_path:
+                        raise ValueError(
+                            "No resume path was found for this application. "
+                            "Check that get_candidate() returns resume_path."
+                        )
+
+                    if not os.path.isfile(resume_path):
+                        raise FileNotFoundError(
+                            f"Resume file does not exist at: {resume_path}"
+                        )
+
+                    evaluation = screen_candidate_with_agent(
+                        resume_path,
+                        selected_job.get("description", ""),
+                    )
+
+                    if not isinstance(evaluation, dict):
+                        raise ValueError("The agent returned an invalid evaluation.")
+
+                    score_value = evaluation.get(
+                        "final_candidate_score",
+                        evaluation.get("final_score", evaluation.get("score")),
+                    )
+                    try:
+                        score_value = float(score_value)
+                    except (TypeError, ValueError):
+                        score_value = None
+
+                    results.append({
+                        "Candidate": application.get("name", label),
+                        "Application ID": application_id,
+                        "Agent Score": score_value,
+                        "Status": "Completed",
+                        "Evaluation": evaluation,
+                    })
+
+                except Exception as error:
+                    results.append({
+                        "Candidate": label,
+                        "Application ID": application_id,
+                        "Agent Score": None,
+                        "Status": f"Failed: {error}",
+                        "Evaluation": None,
+                    })
+
+                progress.progress(index / total_selected)
+
+            st.session_state["agent_screening_results"] = results
+            st.session_state["agent_screening_job_id"] = selected_job["id"]
+            status_area.empty()
+            progress.empty()
+            st.rerun()
+
+    saved_results = st.session_state.get("agent_screening_results", [])
+    saved_job_id = st.session_state.get("agent_screening_job_id")
+
+    if saved_results and saved_job_id == selected_job["id"]:
+        st.subheader("Agent Screening Results")
+
+        summary_rows = []
+        for result in saved_results:
+            summary_rows.append({
+                "Candidate": result["Candidate"],
+                "Application ID": result["Application ID"],
+                "Agent Score": (
+                    f"{result['Agent Score']:.2f}%"
+                    if result["Agent Score"] is not None
+                    else "N/A"
+                ),
+                "Result": result["Status"],
+            })
+
+        st.dataframe(
+            pd.DataFrame(summary_rows),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        def _as_list(value):
+            """Normalize list-like evaluation fields for readable display."""
+            if value is None:
+                return []
+            if isinstance(value, str):
+                value = value.strip()
+                if not value:
+                    return []
+                try:
+                    parsed = json.loads(value)
+                    if isinstance(parsed, list):
+                        return parsed
+                    if isinstance(parsed, dict):
+                        return [f"{key}: {val}" for key, val in parsed.items()]
+                except Exception:
+                    pass
+                return [part.strip() for part in value.split(",") if part.strip()]
+            if isinstance(value, dict):
+                return [f"{key}: {val}" for key, val in value.items()]
+            if isinstance(value, (list, tuple, set)):
+                return list(value)
+            return [value]
+
+        def _first_value(data, *keys):
+            for key in keys:
+                value = data.get(key)
+                if value not in (None, "", [], {}):
+                    return value
+            return None
+
+        def _format_score(value):
+            if value is None:
+                return "N/A"
+            try:
+                number = float(value)
+                # Evaluation scores are usually percentages; avoid displaying
+                # a misleading percentage if the score is already on a 0–1 scale.
+                if 0 <= number <= 1:
+                    number *= 100
+                return f"{number:.1f}%"
+            except (TypeError, ValueError):
+                return str(value)
+
+        for result in saved_results:
+            with st.expander(
+                f"{result['Candidate']} — {result['Status']}",
+                expanded=(result["Status"] == "Completed"),
+            ):
+                evaluation = result.get("Evaluation")
+                if not isinstance(evaluation, dict):
+                    st.error(result["Status"])
+                    continue
+
+                # Present the result as a recruiter-friendly summary first.
+                score = _first_value(
+                    evaluation, "final_candidate_score", "final_score", "score", "overall_score"
+                )
+                recommendation = _first_value(
+                    evaluation, "recommendation", "hiring_recommendation", "candidate_recommendation", "match_level"
+                )
+                summary = _first_value(
+                    evaluation, "summary", "overall_summary", "candidate_summary", "assessment"
+                )
+
+                score_col, recommendation_col, app_col = st.columns(3)
+                score_col.metric("Overall Match Score", _format_score(score if score is not None else result.get("Agent Score")))
+                recommendation_col.metric("Recommendation", str(recommendation or "Recruiter review"))
+                app_col.metric("Application ID", str(result.get("Application ID", "N/A")))
+
+                if summary:
+                    st.markdown("**Recruiter summary**")
+                    st.write(str(summary))
+                else:
+                    st.caption("Review the evidence and skill breakdown below. The model did not provide a separate summary.")
+
+                matched = _as_list(_first_value(
+                    evaluation, "matched_skills", "matching_skills", "skills_matched", "matched_required_skills"
+                ))
+                missing = _as_list(_first_value(
+                    evaluation, "missing_skills", "skills_missing", "missing_required_skills", "gaps"
+                ))
+                preferred = _as_list(_first_value(
+                    evaluation, "preferred_skills", "matched_preferred_skills", "preferred_skills_matched"
+                ))
+
+                st.markdown("#### Skills assessment")
+                skill_col1, skill_col2 = st.columns(2)
+                with skill_col1:
+                    st.markdown("**✅ Matched skills**")
+                    if matched:
+                        for skill in matched:
+                            st.markdown(f"- {skill}")
+                    else:
+                        st.caption("No matched-skills list was provided in the evaluation.")
+                with skill_col2:
+                    st.markdown("**⚠️ Missing or unverified skills**")
+                    if missing:
+                        for skill in missing:
+                            st.markdown(f"- {skill}")
+                    else:
+                        st.caption("No missing-skills list was provided in the evaluation.")
+
+                if preferred:
+                    st.markdown("**Preferred skills**")
+                    st.write(", ".join(str(item) for item in preferred))
+
+                # Display common component scores as metrics when present.
+                component_fields = [
+                    ("Required skills", ("required_skill_score", "required_skills_score")),
+                    ("Preferred skills", ("preferred_skill_score", "preferred_skills_score")),
+                    ("Experience", ("experience_score",)),
+                    ("Education", ("education_score",)),
+                    ("Evidence", ("evidence_score", "skill_evidence_score")),
+                ]
+                component_values = []
+                for label, keys in component_fields:
+                    value = _first_value(evaluation, *keys)
+                    if value is not None:
+                        component_values.append((label, value))
+                if component_values:
+                    st.markdown("#### Score breakdown")
+                    metric_cols = st.columns(min(len(component_values), 5))
+                    for index, (label, value) in enumerate(component_values):
+                        metric_cols[index % len(metric_cols)].metric(label, _format_score(value))
+
+                evidence = _first_value(
+                    evaluation, "evidence", "skill_evidence", "matched_evidence", "evidence_summary", "reasoning"
+                )
+                if evidence:
+                    st.markdown("#### Resume evidence")
+                    if isinstance(evidence, (dict, list)):
+                        st.write(evidence)
+                    else:
+                        st.write(str(evidence))
+
+                # Keep raw JSON available for debugging/auditing, but collapsed by default.
+                with st.expander("View technical evaluation data (JSON)"):
+                    st.json(evaluation)
+
+        st.info(
+            "These are AI-assisted recommendations. Review the resume evidence "
+            "and evaluation before making a hiring decision. Candidate statuses "
+            "have not been changed by this page."
+        )
+

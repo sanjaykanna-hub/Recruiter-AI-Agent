@@ -7,6 +7,9 @@ from backend.database import (
     init_database,
     create_candidate_account,
     authenticate_candidate,
+    change_candidate_password,
+    reset_candidate_password,
+    get_candidate_security_question,
     get_candidate,
     update_candidate_resume,
     get_jobs,
@@ -383,31 +386,23 @@ def send_feedback_email(
 def show_login_page():
 
     st.markdown(
-        """
-        <div style="
-            text-align:center;
-            padding:40px 0 20px 0;
-        ">
-
+               """
+        <div style="text-align: center; padding: 40px 0 20px 0;">
             <h1>💼 Recruiter AI</h1>
-
-            <p style="font-size:18px;">
-                Candidate Portal
-            </p>
-
+            <p style="font-size: 18px;">Candidate Portal</p>
             <p>
                 Apply for jobs, track your applications
                 and get AI career guidance.
             </p>
-
         </div>
         """,
         unsafe_allow_html=True
     )
 
-    login_tab, register_tab = st.tabs([
+    login_tab, register_tab, forgot_tab = st.tabs([
         "Login",
-        "Create Account"
+        "Create Account",
+        "Forgot Password"
     ])
 
     # ========================================================
@@ -493,15 +488,32 @@ def show_login_page():
             key="register_confirm_password"
         )
 
+        security_questions = [
+            "What was the name of your first school?",
+            "What city were you born in?",
+            "What was the name of your first pet?",
+            "What is the first name of your oldest cousin?",
+        ]
+        security_question = st.selectbox(
+            "Choose a security question",
+            security_questions,
+            key="register_security_question",
+        )
+        security_answer = st.text_input(
+            "Your answer (remember it exactly)",
+            key="register_security_answer",
+            help="Your answer is stored as a hash and is used to verify password resets.",
+        )
+
         if st.button(
             "Create Account",
             use_container_width=True
         ):
 
-            if not name or not email or not password:
+            if not name or not email or not password or not security_answer.strip():
 
                 st.warning(
-                    "Please fill in all fields."
+                    "Please fill in all fields, including your security answer."
                 )
 
             elif password != confirm_password:
@@ -519,9 +531,11 @@ def show_login_page():
             else:
 
                 candidate_id = create_candidate_account(
-                    name,
-                    email,
-                    password
+                    name.strip(),
+                    email.strip().lower(),
+                    password,
+                    security_question,
+                    security_answer,
                 )
 
                 if candidate_id:
@@ -536,6 +550,76 @@ def show_login_page():
                     st.error(
                         "An account with this email already exists."
                     )
+
+
+    # ========================================================
+    # FORGOT PASSWORD - SECURITY QUESTION RESET
+    # ========================================================
+
+    with forgot_tab:
+        st.subheader("Reset your password")
+        st.write(
+            "Enter your account email and answer the security question you selected when creating your account."
+        )
+
+        reset_email = st.text_input(
+            "Account email",
+            key="forgot_password_email",
+        ).strip().lower()
+
+        if st.button(
+            "Find my security question",
+            key="load_security_question",
+            use_container_width=True,
+        ):
+            if not reset_email or "@" not in reset_email:
+                st.warning("Enter a valid email address.")
+                st.session_state.pop("password_reset_question", None)
+                st.session_state.pop("password_reset_email", None)
+            else:
+                question = get_candidate_security_question(reset_email)
+                if question:
+                    st.session_state["password_reset_email"] = reset_email
+                    st.session_state["password_reset_question"] = question
+                    st.success("Security question found. Answer it to continue.")
+                else:
+                    st.error(
+                        "No security question is set for this account. Existing accounts may need to be updated or recreated with the new registration form."
+                    )
+                    st.session_state.pop("password_reset_question", None)
+                    st.session_state.pop("password_reset_email", None)
+
+        if st.session_state.get("password_reset_question") and st.session_state.get("password_reset_email") == reset_email:
+            st.info(f"**Security question:** {st.session_state['password_reset_question']}")
+            with st.form("security_question_reset_form"):
+                security_answer = st.text_input("Your answer", key="forgot_security_answer")
+                new_reset_password = st.text_input("New password", type="password", key="forgot_new_password")
+                confirm_reset_password = st.text_input("Confirm new password", type="password", key="forgot_confirm_new_password")
+                reset_submitted = st.form_submit_button("Verify answer and reset password", use_container_width=True)
+
+            if reset_submitted:
+                if not security_answer.strip() or not new_reset_password or not confirm_reset_password:
+                    st.warning("Please complete all fields.")
+                elif len(new_reset_password) < 6:
+                    st.warning("Password must contain at least 6 characters.")
+                elif new_reset_password != confirm_reset_password:
+                    st.error("The passwords do not match.")
+                else:
+                    try:
+                        reset_ok = reset_candidate_password(
+                            st.session_state["password_reset_email"],
+                            security_answer,
+                            new_reset_password,
+                        )
+                        if reset_ok:
+                            st.success("Password reset successfully. Return to Login and sign in with your new password.")
+                            for key in ("password_reset_email", "password_reset_question", "forgot_security_answer", "forgot_new_password", "forgot_confirm_new_password"):
+                                st.session_state.pop(key, None)
+                        else:
+                            st.error("The security answer is incorrect, or this account has no saved security answer. Your password was not changed.")
+                    except Exception as error:
+                        st.error("Password reset failed. Please try again.")
+                        st.exception(error)
 
 
 # ============================================================
@@ -562,7 +646,9 @@ def show_sidebar():
             "My Applications",
             "Notifications",
             "AI Improvement",
-            "Feedback"
+            "Recommended Jobs",
+            "Feedback",
+            "Change Password"
         ]
 
         for page in pages:
@@ -1499,6 +1585,78 @@ def show_feedback():
 
 
 # ============================================================
+# CHANGE PASSWORD
+# ============================================================
+
+def show_change_password():
+
+    user = st.session_state.candidate_user
+
+    st.title("🔐 Change Password")
+    st.write("Update the password for your candidate account.")
+
+    with st.form("change_password_form"):
+        current_password = st.text_input(
+            "Current Password",
+            type="password",
+            key="change_current_password",
+        )
+
+        new_password = st.text_input(
+            "New Password",
+            type="password",
+            key="change_new_password",
+        )
+
+        confirm_password = st.text_input(
+            "Confirm New Password",
+            type="password",
+            key="change_confirm_password",
+        )
+
+        submitted = st.form_submit_button(
+            "Update Password",
+            use_container_width=True,
+        )
+
+    if not submitted:
+        return
+
+    if not current_password or not new_password or not confirm_password:
+        st.warning("Please fill in all password fields.")
+        return
+
+    if len(new_password) < 6:
+        st.warning("Your new password must contain at least 6 characters.")
+        return
+
+    if new_password != confirm_password:
+        st.error("The new passwords do not match.")
+        return
+
+    if current_password == new_password:
+        st.warning("Choose a password different from your current password.")
+        return
+
+    try:
+        changed = change_candidate_password(
+            user["email"],
+            current_password,
+            new_password,
+        )
+
+        if changed:
+            st.success("Your password has been changed successfully.")
+            st.info("Use your new password the next time you log in.")
+        else:
+            st.error("Your current password is incorrect.")
+
+    except Exception as error:
+        st.error("Could not update your password. Please try again.")
+        st.exception(error)
+
+
+# ============================================================
 # MAIN APPLICATION
 # ============================================================
 
@@ -1536,6 +1694,14 @@ else:
 
         show_recommended_jobs()
 
+    elif page == "Recommended Jobs":
+
+        show_recommended_jobs()
+
     elif page == "Feedback":
 
         show_feedback()
+
+    elif page == "Change Password":
+
+        show_change_password()

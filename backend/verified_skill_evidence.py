@@ -3,9 +3,9 @@ import numpy as np
 
 from sentence_transformers import SentenceTransformer
 
-from skill_retriever import (
+from backend.skill_retriever import (
     find_skill_evidence,
-    extract_resume_sections
+    extract_resume_sections,
 )
 
 

@@ -8,5 +8,9 @@ data/*.db
 
 # Gmail API OAuth credentials
 credentials.json
+token_old.json
+token_backup.json
 token.json
-
+token*.json
+credentials.json
+data/resumes/

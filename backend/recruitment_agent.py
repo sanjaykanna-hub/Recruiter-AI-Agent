@@ -29,6 +29,16 @@ if CURRENT_DIR not in sys.path:
     )
 
 
+# Load environment variables from the project's .env file.
+# The .env file should be in PROJECT_ROOT, alongside recruiter_app.py.
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(PROJECT_ROOT, ".env"))
+except ImportError:
+    # Environment variables can still be supplied by the hosting platform.
+    pass
+
+
 # ============================================================
 # LANGCHAIN IMPORTS
 # ============================================================
@@ -36,6 +46,11 @@ if CURRENT_DIR not in sys.path:
 from langchain.agents import create_agent
 from langchain_core.tools import tool
 from langchain_google_genai import ChatGoogleGenerativeAI
+
+try:
+    from langchain_groq import ChatGroq
+except ImportError:
+    ChatGroq = None
 
 
 # ============================================================
@@ -462,56 +477,93 @@ Use it to obtain the actual candidate evaluation.
 
 
 # ============================================================
-# CREATE AGENT
+# CREATE AGENT WITH PROVIDER SELECTION
 # ============================================================
 
-def create_recruitment_agent(
-    model=None
-):
+def create_recruitment_agent(model=None, provider=None):
+    """Create the recruitment agent using Gemini or Groq.
 
-    api_key = os.getenv(
-        "GOOGLE_API_KEY"
-    )
-
-
-    if not api_key:
-
-        raise ValueError(
-            "GOOGLE_API_KEY is not set. "
-            "Set it in your environment before "
-            "starting the recruitment agent."
-        )
-
-
+    Default priority is Gemini first, then Groq if Gemini is not configured.
+    The fallback after a runtime model/API error is handled by
+    screen_candidate_with_agent().
+    """
     if model is None:
+        google_api_key = os.getenv("GOOGLE_API_KEY")
+        groq_api_key = os.getenv("GROQ_API_KEY")
 
-        model_name = os.getenv(
-            "GEMINI_MODEL",
-            "gemini-3.8-flash"
-        )
+        # Select provider explicitly for fallback attempts, or choose the
+        # preferred configured provider when no provider is specified.
+        if provider is None:
+            provider = "gemini" if google_api_key else "groq"
 
+        if provider == "gemini":
+            if not google_api_key:
+                raise RuntimeError(
+                    "GOOGLE_API_KEY is not configured in the environment or .env file."
+                )
 
-        model = ChatGoogleGenerativeAI(
+            model_name = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
+            model = ChatGoogleGenerativeAI(
+                model=model_name,
+                temperature=0,
+                google_api_key=google_api_key,
+                max_retries=0,
+            )
 
-            model=model_name,
+        elif provider == "groq":
+            if not groq_api_key:
+                raise RuntimeError(
+                    "GROQ_API_KEY is not configured in the environment or .env file."
+                )
+            if ChatGroq is None:
+                raise RuntimeError(
+                    "The langchain-groq package is not installed. Run: "
+                    "python -m pip install langchain-groq"
+                )
 
-            temperature=0,
+            model_name = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+            model = ChatGroq(
+                model=model_name,
+                temperature=0,
+                api_key=groq_api_key,
+                max_retries=0,
+            )
+        else:
+            raise ValueError("Unsupported provider. Use 'gemini' or 'groq'.")
 
-            google_api_key=api_key
-        )
-
-
-    agent = create_agent(
-
+    return create_agent(
         model=model,
-
         tools=RECRUITMENT_TOOLS,
-
-        system_prompt=SYSTEM_PROMPT
+        system_prompt=SYSTEM_PROMPT,
     )
 
 
-    return agent
+def _provider_error_text(error):
+    """Return a lowercase error string useful for provider diagnostics."""
+    return f"{type(error).__name__}: {error}".lower()
+
+
+def _is_retryable_provider_error(error):
+    """Identify common quota, rate-limit, and temporary service errors."""
+    message = _provider_error_text(error)
+    markers = (
+        "429",
+        "resource_exhausted",
+        "resource exhausted",
+        "rate limit",
+        "rate_limit",
+        "quota",
+        "503",
+        "service unavailable",
+        "temporarily unavailable",
+        "500 internal",
+        "internal server error",
+        "timeout",
+        "timed out",
+        "connection error",
+        "connection reset",
+    )
+    return any(marker in message for marker in markers)
 
 
 # ============================================================
@@ -673,29 +725,20 @@ def extract_evaluation_from_agent_response(
 
 
 # ============================================================
-# SCREEN CANDIDATE USING AGENT
+# SCREEN CANDIDATE USING AGENT WITH FALLBACK
 # ============================================================
 
 def screen_candidate_with_agent(
     resume_path,
     job_description
 ):
+    """Screen a candidate using Gemini, falling back to Groq on common
+    transient API, rate-limit, or quota errors.
 
+    The recruitment tools and candidate evaluation pipeline are shared by
+    both providers. The evaluation tools themselves remain the source of
+    numerical scores; the language model must not invent them.
     """
-    Main production screening function.
-
-    Candidate upload
-        ↓
-    LangChain Recruitment Agent
-        ↓
-    Evaluation Tool
-        ↓
-    Structured candidate result
-    """
-
-    agent = create_recruitment_agent()
-
-
     prompt = f"""
 Screen this candidate for the following job.
 
@@ -706,8 +749,7 @@ INTERNAL RESUME PATH:
 {resume_path}
 
 Required workflow:
-
-1. Analyze the job requirements.
+1. Analyze the job requirements when useful.
 2. Analyze the resume.
 3. Evaluate the resume against the job.
 4. Use the evaluate_resume_against_job tool.
@@ -716,35 +758,59 @@ Required workflow:
 Do not invent scores or candidate information.
 """
 
+    google_api_key = os.getenv("GOOGLE_API_KEY")
+    groq_api_key = os.getenv("GROQ_API_KEY")
 
-    response = agent.invoke({
-
-        "messages": [
-
-            {
-                "role": "user",
-
-                "content": prompt
-            }
-        ]
-    })
-
-
-    evaluation = (
-        extract_evaluation_from_agent_response(
-            response
+    if not google_api_key and not groq_api_key:
+        raise RuntimeError(
+            "Neither GOOGLE_API_KEY nor GROQ_API_KEY is configured. "
+            "Add them to the project's .env file or hosting secrets."
         )
-    )
 
+    # Use Gemini first when configured. If only Groq is configured, use Groq.
+    primary_provider = "gemini" if google_api_key else "groq"
+    fallback_provider = "groq" if primary_provider == "gemini" else None
+
+    try:
+        agent = create_recruitment_agent(provider=primary_provider)
+        response = agent.invoke({
+            "messages": [{"role": "user", "content": prompt}]
+        })
+    except Exception as primary_error:
+        can_fallback = (
+            fallback_provider == "groq"
+            and bool(groq_api_key)
+            and _is_retryable_provider_error(primary_error)
+        )
+
+        if not can_fallback:
+            raise RuntimeError(
+                f"The primary AI provider ({primary_provider}) failed. "
+                f"Automatic fallback was not used because the error was not "
+                f"recognized as a temporary quota/availability issue, or no "
+                f"fallback provider is configured. Original error: {primary_error}"
+            ) from primary_error
+
+        try:
+            fallback_agent = create_recruitment_agent(provider=fallback_provider)
+            response = fallback_agent.invoke({
+                "messages": [{"role": "user", "content": prompt}]
+            })
+        except Exception as fallback_error:
+            raise RuntimeError(
+                f"Both AI providers failed. Primary provider: {primary_provider}; "
+                f"fallback provider: {fallback_provider}. "
+                f"Primary error: {primary_error}. "
+                f"Fallback error: {fallback_error}"
+            ) from fallback_error
+
+    evaluation = extract_evaluation_from_agent_response(response)
 
     if evaluation is None:
-
         raise RuntimeError(
-            "The Recruitment Agent completed its response "
-            "but did not return the structured candidate "
-            "evaluation."
+            "The Recruitment Agent completed its response but did not return "
+            "the structured candidate evaluation."
         )
-
 
     return evaluation
 
