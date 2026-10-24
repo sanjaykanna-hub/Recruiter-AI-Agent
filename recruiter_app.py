@@ -45,6 +45,8 @@ from backend.database import (
     create_interview,
 
     get_interviews_for_application,
+    reschedule_interview,
+    cancel_interview,
     get_candidate
 
 )
@@ -2712,109 +2714,160 @@ elif page == "Dashboard":
 
             # =================================================
 
-            # EXISTING INTERVIEWS
-
             # =================================================
+            # EXISTING INTERVIEWS + MANAGEMENT
+            # =================================================
+            st.subheader("📋 Scheduled Interviews")
 
-            st.subheader(
-
-                "📋 Scheduled Interviews"
-
-            )
-
-            interviews = get_interviews_for_application(
-
-                candidate["id"]
-
-            )
+            interviews = get_interviews_for_application(candidate["id"])
 
             if not interviews:
+                st.info("No interview scheduled for this candidate.")
 
-                st.info(
+            for interview in interviews:
+                interview_id = interview["id"]
 
-                    "No interview scheduled for this candidate."
+                with st.container(border=True):
+                    st.markdown(f"### {interview['interview_type']} Interview")
+                    st.write(f"**Interview ID:** {interview_id}")
+                    st.write(f"**Date:** {interview['interview_date']}")
+                    st.write(f"**Time:** {interview['interview_time']}")
+                    st.write(f"**Interviewer:** {interview['interviewer']}")
+                    st.write(f"**Status:** {interview['status']}")
 
-                )
+                    if interview.get("meeting_link"):
+                        meeting_url = interview["meeting_link"].strip()
+                        if not meeting_url.startswith(("http://", "https://")):
+                            meeting_url = "https://" + meeting_url
+                        if interview["status"] == "Scheduled":
+                            st.link_button("🔗 Join Interview", meeting_url)
 
-            else:
+                    if interview.get("notes"):
+                        st.write(f"**Notes:** {interview['notes']}")
 
-                for interview in interviews:
+                    if interview["status"] == "Scheduled":
+                        with st.expander("✏️ Reschedule Interview"):
+                            with st.form(f"reschedule_form_{interview_id}"):
+                                try:
+                                    current_date = date.fromisoformat(
+                                        str(interview["interview_date"])
+                                    )
+                                except (ValueError, TypeError):
+                                    current_date = date.today()
+                                selected_date = max(date.today(), current_date)
 
-                    with st.container():
+                                new_date = st.date_input(
+                                    "New Interview Date",
+                                    value=selected_date,
+                                    min_value=date.today(),
+                                    key=f"new_date_{interview_id}",
+                                )
 
-                        st.markdown(
+                                try:
+                                    current_time = time.fromisoformat(
+                                        str(interview["interview_time"])
+                                    )
+                                except (ValueError, TypeError):
+                                    current_time = time(10, 0)
 
-                            f"""
+                                new_time = st.time_input(
+                                    "New Interview Time",
+                                    value=current_time,
+                                    key=f"new_time_{interview_id}",
+                                )
 
-                            ### {interview['interview_type']} Interview
-
-                            **Date:** {interview['interview_date']}
-
-                            **Time:** {interview['interview_time']}
-
-                            **Interviewer:** {interview['interviewer']}
-
-                            **Status:** {interview['status']}
-
-                            """
-
-                        )
-
-                        if interview[
-
-                            "meeting_link"
-
-                        ]:
-
-                            meeting_url = (
-
-                                interview[
-
-                                    "meeting_link"
-
+                                interview_types = [
+                                    "Technical", "HR", "Managerial", "Technical + HR"
                                 ]
-
-                            )
-
-                            if not meeting_url.startswith(
-
-                                (
-
-                                    "http://",
-
-                                    "https://"
-
+                                current_type = interview.get("interview_type", "Technical")
+                                type_index = (
+                                    interview_types.index(current_type)
+                                    if current_type in interview_types else 0
+                                )
+                                new_type = st.selectbox(
+                                    "Interview Type",
+                                    interview_types,
+                                    index=type_index,
+                                    key=f"new_type_{interview_id}",
+                                )
+                                new_interviewer = st.text_input(
+                                    "Interviewer",
+                                    value=interview.get("interviewer", ""),
+                                    key=f"new_interviewer_{interview_id}",
+                                )
+                                new_link = st.text_input(
+                                    "Meeting Link",
+                                    value=interview.get("meeting_link", ""),
+                                    key=f"new_link_{interview_id}",
+                                )
+                                new_notes = st.text_area(
+                                    "Notes",
+                                    value=interview.get("notes", ""),
+                                    key=f"new_notes_{interview_id}",
+                                )
+                                save_reschedule = st.form_submit_button(
+                                    "Save New Schedule", type="primary"
                                 )
 
+                                if save_reschedule:
+                                    if not new_interviewer.strip():
+                                        st.error("Please enter the interviewer name.")
+                                    else:
+                                        try:
+                                            result = reschedule_interview(
+                                                interview_id=interview_id,
+                                                interview_date=str(new_date),
+                                                interview_time=new_time.strftime("%H:%M:%S"),
+                                                interview_type=new_type,
+                                                interviewer=new_interviewer.strip(),
+                                                meeting_link=new_link.strip(),
+                                                notes=new_notes.strip(),
+                                            )
+                                            st.success("Interview schedule updated.")
+                                            if result["email_sent"]:
+                                                st.success("Rescheduling email sent successfully.")
+                                            else:
+                                                st.warning(
+                                                    "Schedule updated, but the email could not be sent. "
+                                                    "Check the terminal."
+                                                )
+                                            st.rerun()
+                                        except Exception as exc:
+                                            st.error(f"Could not reschedule: {exc}")
+
+                        with st.expander("🛑 Cancel Interview"):
+                            st.warning(
+                                "Cancellation keeps the interview record in the database "
+                                "but changes its status to Cancelled."
+                            )
+                            confirm_cancel = st.checkbox(
+                                "I confirm that I want to cancel this interview.",
+                                key=f"confirm_cancel_{interview_id}",
+                            )
+                            if st.button(
+                                "Confirm Cancellation",
+                                key=f"cancel_interview_{interview_id}",
+                                type="secondary",
+                                disabled=not confirm_cancel,
                             ):
-
-                                meeting_url = (
-
-                                    "https://"
-
-                                    + meeting_url
-
-                                )
-
-                            st.link_button(
-
-                                "🔗 Join Interview",
-
-                                meeting_url
-
-                            )
-
-                        if interview["notes"]:
-
-                            st.write(
-
-                                f"**Notes:** "
-
-                                f"{interview['notes']}"
-
-                            )
-
-                        st.divider()
+                                try:
+                                    result = cancel_interview(interview_id)
+                                    st.success("Interview cancelled.")
+                                    if result["email_sent"]:
+                                        st.success("Cancellation email sent successfully.")
+                                    else:
+                                        st.warning(
+                                            "Interview cancelled, but the email could not be sent. "
+                                            "Check the terminal."
+                                        )
+                                    st.rerun()
+                                except Exception as exc:
+                                    st.error(f"Could not cancel interview: {exc}")
+                    else:
+                        st.caption(
+                            "This interview is no longer scheduled, so it cannot be "
+                            "rescheduled or cancelled again."
+                        )
 
 # ============================================================
 

@@ -1753,9 +1753,12 @@ def send_interview_email(
     interview_type,
     interviewer,
     meeting_link="",
-    notes=""
+    notes="",
+    email_subject=None,
+    email_intro=None,
+    email_closing=None,
 ):
-    """Send an interview invitation using Gmail API OAuth."""
+    """Send an interview invitation or interview-status update using Gmail API OAuth."""
     import base64
     from email.message import EmailMessage
 
@@ -1821,10 +1824,12 @@ def send_interview_email(
 
         message = EmailMessage()
         message["To"] = str(candidate_email).strip()
-        message["Subject"] = f"Interview Invitation: {job_title or 'Interview'}"
+        message["Subject"] = email_subject or (
+            f"Interview Invitation: {job_title or 'Interview'}"
+        )
         message.set_content(
-            f"Hello {candidate_name or 'Candidate'},\n\n"
-            "Your interview has been scheduled. Details:\n\n"
+            f"Hello {candidate_name or 'Candidate'}\n\n"
+            f"{email_intro or 'Your interview has been scheduled. Details:'}\n\n"
             f"Job title: {job_title or 'Interview'}\n"
             f"Date: {interview_date or 'Not specified'}\n"
             f"Time: {interview_time or 'Not specified'}\n"
@@ -1832,7 +1837,7 @@ def send_interview_email(
             f"Interviewer: {interviewer or 'Not specified'}\n"
             f"Meeting link: {meeting_link or 'Not provided'}\n"
             f"Notes: {notes or 'No additional notes'}\n\n"
-            "Please be ready at the scheduled time.\n\n"
+            f"{email_closing or 'Please be ready at the scheduled time.'}\n\n"
             "Best regards,\nRecruitment Team"
         )
         encoded_message = base64.urlsafe_b64encode(message.as_bytes()).decode("utf-8")
@@ -2171,6 +2176,179 @@ def get_interviews_for_application(application_id):
     finally:
 
         conn.close()
+
+
+# ============================================================
+# INTERVIEW RESCHEDULING AND CANCELLATION
+# ============================================================
+
+def _get_interview_context(cursor, interview_id):
+    """Fetch interview details together with candidate and job information."""
+    cursor.execute(
+        """
+        SELECT
+            i.*,
+            a.candidate_id,
+            c.name AS candidate_name,
+            c.email AS candidate_email,
+            j.title AS job_title
+        FROM interviews AS i
+        JOIN applications AS a ON a.application_id = i.application_id
+        JOIN candidates AS c ON c.candidate_id = a.candidate_id
+        JOIN jobs AS j ON j.job_id = a.job_id
+        WHERE i.id = ?
+        """,
+        (interview_id,),
+    )
+    row = cursor.fetchone()
+    return dict(row) if row else None
+
+
+def reschedule_interview(
+    interview_id,
+    interview_date,
+    interview_time,
+    interview_type=None,
+    interviewer=None,
+    meeting_link=None,
+    notes=None,
+):
+    """Update a scheduled interview and notify the candidate."""
+    if not str(interview_date).strip() or not str(interview_time).strip():
+        raise ValueError("Interview date and time are required.")
+
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        interview = _get_interview_context(cursor, interview_id)
+
+        if not interview:
+            raise ValueError(f"Interview {interview_id} was not found.")
+        if interview["status"] != "Scheduled":
+            raise ValueError("Only scheduled interviews can be rescheduled.")
+
+        cursor.execute(
+            """
+            UPDATE interviews
+            SET interview_date = ?,
+                interview_time = ?,
+                interview_type = ?,
+                interviewer = ?,
+                meeting_link = ?,
+                notes = ?
+            WHERE id = ? AND status = 'Scheduled'
+            """,
+            (
+                str(interview_date),
+                str(interview_time),
+                interview_type or interview["interview_type"],
+                interviewer if interviewer is not None else interview["interviewer"],
+                meeting_link if meeting_link is not None else interview["meeting_link"],
+                notes if notes is not None else interview["notes"],
+                interview_id,
+            ),
+        )
+        if cursor.rowcount != 1:
+            raise ValueError("The interview was not updated.")
+
+        conn.commit()
+        updated = _get_interview_context(cursor, interview_id)
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+    create_notification(
+        candidate_id=updated["candidate_id"],
+        application_id=updated["application_id"],
+        title="Interview Rescheduled",
+        message=(
+            f"Your interview has been rescheduled. New date: "
+            f"{updated['interview_date']}; new time: {updated['interview_time']}."
+        ),
+        notification_type="Interview",
+    )
+
+    email_sent = send_interview_email(
+        candidate_email=updated["candidate_email"],
+        candidate_name=updated["candidate_name"],
+        job_title=updated["job_title"],
+        interview_date=updated["interview_date"],
+        interview_time=updated["interview_time"],
+        interview_type=updated["interview_type"],
+        interviewer=updated["interviewer"],
+        meeting_link=updated["meeting_link"],
+        notes=updated["notes"],
+        email_subject=f"Interview Rescheduled: {updated['job_title']}",
+        email_intro=(
+            "Your interview has been rescheduled. Please use the updated details below."
+        ),
+    )
+    return {"success": True, "email_sent": email_sent, "interview_id": interview_id}
+
+
+def cancel_interview(interview_id):
+    """Cancel a scheduled interview while retaining its database history."""
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        interview = _get_interview_context(cursor, interview_id)
+
+        if not interview:
+            raise ValueError(f"Interview {interview_id} was not found.")
+        if interview["status"] != "Scheduled":
+            raise ValueError("Only scheduled interviews can be cancelled.")
+
+        cursor.execute(
+            """
+            UPDATE interviews
+            SET status = 'Cancelled'
+            WHERE id = ? AND status = 'Scheduled'
+            """,
+            (interview_id,),
+        )
+        if cursor.rowcount != 1:
+            raise ValueError("The interview was not cancelled.")
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+    create_notification(
+        candidate_id=interview["candidate_id"],
+        application_id=interview["application_id"],
+        title="Interview Cancelled",
+        message=(
+            f"Your interview for {interview['job_title']} scheduled on "
+            f"{interview['interview_date']} at {interview['interview_time']} "
+            "has been cancelled."
+        ),
+        notification_type="Interview",
+    )
+
+    email_sent = send_interview_email(
+        candidate_email=interview["candidate_email"],
+        candidate_name=interview["candidate_name"],
+        job_title=interview["job_title"],
+        interview_date=interview["interview_date"],
+        interview_time=interview["interview_time"],
+        interview_type=interview["interview_type"],
+        interviewer=interview["interviewer"],
+        meeting_link=interview["meeting_link"],
+        notes=interview["notes"],
+        email_subject=f"Interview Cancelled: {interview['job_title']}",
+        email_intro=(
+            "We regret to inform you that this interview has been cancelled. "
+            "Please contact the recruitment team if you have questions."
+        ),
+        email_closing="This interview is cancelled. Please do not join the meeting.",
+    )
+    return {"success": True, "email_sent": email_sent, "interview_id": interview_id}
+
+
 
 # ============================================================
 

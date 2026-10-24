@@ -32,7 +32,8 @@ MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
 
 if not API_KEY:
     raise RuntimeError(
-        "GOOGLE_API_KEY is missing. Check the .env file in your project root."
+        "GOOGLE_API_KEY is missing. Check the .env file "
+        "in your project root."
     )
 
 
@@ -46,7 +47,7 @@ model = ChatGoogleGenerativeAI(
     temperature=0,
 )
 
-# Register all recruiter tools with Gemini.
+# Register recruitment tools
 tools = [
     list_jobs,
     get_job_details,
@@ -64,7 +65,7 @@ model_with_tools = model.bind_tools(tools)
 # --------------------------------------------------
 
 def assistant_node(state: MessagesState):
-    """Let Gemini answer or request a tool call."""
+    """Let Gemini answer or request a recruitment tool."""
 
     response = model_with_tools.invoke(state["messages"])
 
@@ -80,13 +81,17 @@ builder = StateGraph(MessagesState)
 builder.add_node("assistant", assistant_node)
 builder.add_node("tools", ToolNode(tools))
 
+# Start with the assistant
 builder.add_edge(START, "assistant")
 
-# Route to the tools when Gemini requests them.
-# Otherwise, finish the current response.
-builder.add_conditional_edges("assistant", tools_condition)
+# If Gemini requests a tool, execute it.
+# Otherwise, finish the response.
+builder.add_conditional_edges(
+    "assistant",
+    tools_condition,
+)
 
-# Return tool results to the assistant for a final response.
+# Return tool results to the assistant
 builder.add_edge("tools", "assistant")
 
 
@@ -100,19 +105,25 @@ agent = builder.compile(checkpointer=memory)
 
 
 # --------------------------------------------------
-# 6. Public function called by api/main.py
+# 6. Run the recruiter agent
 # --------------------------------------------------
 
-def run_agent(message: str, thread_id: str = "default") -> dict:
+def run_agent(
+    message: str,
+    thread_id: str = "default",
+) -> dict:
     """
-    Execute the recruiter agent.
+    Run the agent with conversation memory.
 
-    Reusing a thread_id retains conversation context while
-    this Python process remains running.
+    Reuse the same thread_id for follow-up questions.
+    Use a different thread_id for a separate conversation.
     """
 
     if not message or not message.strip():
         raise ValueError("Message cannot be empty.")
+
+    if not thread_id or not thread_id.strip():
+        raise ValueError("Thread ID cannot be empty.")
 
     result = agent.invoke(
         {
@@ -126,7 +137,8 @@ def run_agent(message: str, thread_id: str = "default") -> dict:
         config={
             "configurable": {
                 "thread_id": thread_id,
-            }
+            },
+            "recursion_limit": 12,
         },
     )
 
