@@ -7,21 +7,18 @@ st.set_page_config(
     layout="wide",
 )
 
-pages = {
-    "Recruitment Portal": [
-        st.Page(
-            "recruter.py",
-            title="Recruiter Dashboard",
-            icon="🧑‍💼",
-            default=True,
-        ),
-        st.Page(
-            "candidate_app.py",
-            title="Candidate Portal",
-            icon="👤",
-        ),
-    ]
-}
+recruiter_page = st.Page(
+    "recruiter_app.py",
+    title="Recruiter Dashboard",
+    icon="🧑‍💼",
+    default=True,
+)
 
-selected_page = st.navigation(pages)
-selected_page.run()
+candidate_page = st.Page(
+    "candidate_app.py",
+    title="Candidate Portal",
+    icon="👤",
+)
+
+page = st.navigation([recruiter_page, candidate_page])
+page.run()
