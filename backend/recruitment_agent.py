@@ -521,7 +521,7 @@ def create_recruitment_agent(model=None, provider=None):
                     "python -m pip install langchain-groq"
                 )
 
-            model_name = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+            model_name = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")
             model = ChatGroq(
                 model=model_name,
                 temperature=0,
